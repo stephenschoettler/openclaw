@@ -360,6 +360,18 @@ function rechunkOverflow(ir: MarkdownIR, renderedHtml?: string): string[] {
     return [rendered.slice(0, TELEGRAM_HTML_MAX_CHARS - 1) + "\u2026"];
   }
 
+  // Guard: if the left half's rendered HTML is not smaller than the parent's, the
+  // overflow is dominated by link href length (not text length) — splitting will never
+  // converge.  Fall back to stripping links for both halves and recursing without them
+  // so that subsequent splits converge on text length alone.
+  const leftFull = wrapFileReferencesInHtml(renderTelegramHtml(leftIR));
+  if (leftFull.length >= rendered.length) {
+    return [
+      ...rechunkOverflow({ ...leftIR, links: [] }),
+      ...rechunkOverflow({ ...rightIR, links: [] }),
+    ];
+  }
+
   return [...rechunkOverflow(leftIR), ...rechunkOverflow(rightIR)];
 }
 
