@@ -3,6 +3,7 @@ import {
   chunkMarkdownIR,
   markdownToIR,
   type MarkdownLinkSpan,
+  type MarkdownStyleSpan,
   type MarkdownIR,
 } from "../markdown/ir.js";
 import { renderMarkdownWithMarkers } from "../markdown/render.js";
@@ -263,34 +264,67 @@ export function markdownToTelegramChunks(
 // Telegram Bot API hard limit for message text (HTML mode).
 const TELEGRAM_HTML_MAX_CHARS = 4096;
 
+function sliceStyleSpans(
+  styles: MarkdownStyleSpan[],
+  start: number,
+  end: number,
+): MarkdownStyleSpan[] {
+  return styles.flatMap((span) => {
+    if (span.end <= start || span.start >= end) {
+      return [];
+    }
+    const nextStart = Math.max(span.start, start) - start;
+    const nextEnd = Math.min(span.end, end) - start;
+    if (nextEnd <= nextStart) {
+      return [];
+    }
+    return [{ ...span, start: nextStart, end: nextEnd }];
+  });
+}
+
+function sliceLinkSpans(links: MarkdownLinkSpan[], start: number, end: number): MarkdownLinkSpan[] {
+  return links.flatMap((link) => {
+    if (link.end <= start || link.start >= end) {
+      return [];
+    }
+    const nextStart = Math.max(link.start, start) - start;
+    const nextEnd = Math.min(link.end, end) - start;
+    if (nextEnd <= nextStart) {
+      return [];
+    }
+    return [{ ...link, start: nextStart, end: nextEnd }];
+  });
+}
+
 /**
- * Re-chunks a single source text whose rendered HTML exceeded the hard limit.
- * Splits the source text at a safe whitespace/newline boundary near the midpoint,
- * renders each half, and recurses until all pieces fit within the limit.
+ * Re-chunks a single MarkdownIR whose rendered HTML exceeded the hard limit.
+ * Splits the IR node array at a safe whitespace/newline boundary near the
+ * midpoint — preserving original span metadata (styles, link hrefs) — and
+ * recurses on each half until all pieces fit within the limit.
+ *
+ * Accepts a pre-rendered HTML string to avoid a redundant re-render on the
+ * first call.
  */
-function rechunkOverflow(sourceText: string): string[] {
-  const rendered = wrapFileReferencesInHtml(
-    renderTelegramHtml(
-      markdownToIR(sourceText, {
-        linkify: true,
-        enableSpoilers: true,
-        headingStyle: "none",
-        blockquotePrefix: "",
-      }),
-    ),
-  );
+function rechunkOverflow(ir: MarkdownIR, renderedHtml?: string): string[] {
+  const rendered = renderedHtml ?? wrapFileReferencesInHtml(renderTelegramHtml(ir));
 
   if (rendered.length <= TELEGRAM_HTML_MAX_CHARS) {
     return [rendered];
   }
 
+  const text = ir.text;
+  if (text.length <= 1) {
+    // Cannot split further — truncate as a last resort.
+    return [rendered.slice(0, TELEGRAM_HTML_MAX_CHARS - 1) + "\u2026"];
+  }
+
   // Find a safe split point near the midpoint — prefer newline, then whitespace
-  const mid = Math.floor(sourceText.length / 2);
+  const mid = Math.floor(text.length / 2);
   let splitAt = -1;
 
   // Search backwards from mid for a newline
   for (let i = mid; i >= 0; i--) {
-    if (sourceText[i] === "\n") {
+    if (text[i] === "\n") {
       splitAt = i + 1;
       break;
     }
@@ -298,7 +332,7 @@ function rechunkOverflow(sourceText: string): string[] {
   // Fall back to whitespace
   if (splitAt < 0) {
     for (let i = mid; i >= 0; i--) {
-      if (/\s/.test(sourceText[i])) {
+      if (/\s/.test(text[i])) {
         splitAt = i + 1;
         break;
       }
@@ -309,29 +343,47 @@ function rechunkOverflow(sourceText: string): string[] {
     splitAt = mid;
   }
 
-  const left = sourceText.slice(0, splitAt);
-  const right = sourceText.slice(splitAt);
+  // Slice the IR (text + span metadata) rather than re-parsing plain text.
+  const leftIR: MarkdownIR = {
+    text: text.slice(0, splitAt),
+    styles: sliceStyleSpans(ir.styles, 0, splitAt),
+    links: sliceLinkSpans(ir.links, 0, splitAt),
+  };
+  const rightIR: MarkdownIR = {
+    text: text.slice(splitAt),
+    styles: sliceStyleSpans(ir.styles, splitAt, text.length),
+    links: sliceLinkSpans(ir.links, splitAt, text.length),
+  };
 
   // Avoid infinite loop if we cannot split further
-  if (!left || !right) {
+  if (!leftIR.text || !rightIR.text) {
     return [rendered.slice(0, TELEGRAM_HTML_MAX_CHARS - 1) + "\u2026"];
   }
 
-  return [...rechunkOverflow(left), ...rechunkOverflow(right)];
+  return [...rechunkOverflow(leftIR), ...rechunkOverflow(rightIR)];
 }
 
 export function markdownToTelegramHtmlChunks(markdown: string, limit: number): string[] {
-  const chunks = markdownToTelegramChunks(markdown, limit);
+  // Work directly with MarkdownIR chunks so we can pass the original IR (with span
+  // metadata) into rechunkOverflow — avoiding a lossy round-trip through plain text.
+  const ir = markdownToIR(markdown ?? "", {
+    linkify: true,
+    enableSpoilers: true,
+    headingStyle: "none",
+    blockquotePrefix: "",
+  });
+  const irChunks = chunkMarkdownIR(ir, limit);
   // Safety guard: chunkMarkdownIR splits by plain-text length, but HTML rendering can
   // expand the output (entity escaping, tag overhead). If any rendered chunk still
   // exceeds Telegram's hard limit, re-chunk the overflow rather than truncating it —
   // silent data loss is worse than sending an extra message.
   const result: string[] = [];
-  for (const chunk of chunks) {
-    if (chunk.html.length > TELEGRAM_HTML_MAX_CHARS) {
-      result.push(...rechunkOverflow(chunk.text));
+  for (const irChunk of irChunks) {
+    const html = wrapFileReferencesInHtml(renderTelegramHtml(irChunk));
+    if (html.length > TELEGRAM_HTML_MAX_CHARS) {
+      result.push(...rechunkOverflow(irChunk, html));
     } else {
-      result.push(chunk.html);
+      result.push(html);
     }
   }
   return result;
