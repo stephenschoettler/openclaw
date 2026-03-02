@@ -34,11 +34,15 @@ async function runBrowserToggle(
   parent: BrowserParentOpts,
   params: { profile?: string; path: string },
 ) {
-  await callBrowserRequest(parent, {
-    method: "POST",
-    path: params.path,
-    query: params.profile ? { profile: params.profile } : undefined,
-  });
+  await callBrowserRequest(
+    parent,
+    {
+      method: "POST",
+      path: params.path,
+      query: params.profile ? { profile: params.profile } : undefined,
+    },
+    { timeoutMs: 15000 },
+  );
   const status = await fetchBrowserStatus(parent, params.profile);
   if (parent?.json) {
     defaultRuntime.log(JSON.stringify(status, null, 2));

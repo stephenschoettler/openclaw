@@ -24,9 +24,8 @@ export async function getMemorySearchManager(params: {
   const resolved = resolveMemoryBackendConfig(params);
   if (resolved.backend === "qmd" && resolved.qmd) {
     const statusOnly = params.purpose === "status";
-    let cacheKey: string | undefined;
+    const cacheKey = buildQmdCacheKey(params.agentId, resolved.qmd);
     if (!statusOnly) {
-      cacheKey = buildQmdCacheKey(params.agentId, resolved.qmd);
       const cached = QMD_MANAGER_CACHE.get(cacheKey);
       if (cached) {
         return { manager: cached };
@@ -52,15 +51,9 @@ export async function getMemorySearchManager(params: {
               return await MemoryIndexManager.get(params);
             },
           },
-          () => {
-            if (cacheKey) {
-              QMD_MANAGER_CACHE.delete(cacheKey);
-            }
-          },
+          () => QMD_MANAGER_CACHE.delete(cacheKey),
         );
-        if (cacheKey) {
-          QMD_MANAGER_CACHE.set(cacheKey, wrapper);
-        }
+        QMD_MANAGER_CACHE.set(cacheKey, wrapper);
         return { manager: wrapper };
       }
     } catch (err) {
@@ -224,7 +217,22 @@ class FallbackMemoryManager implements MemorySearchManager {
 }
 
 function buildQmdCacheKey(agentId: string, config: ResolvedQmdConfig): string {
-  // ResolvedQmdConfig is assembled in a stable field order in resolveMemoryBackendConfig.
-  // Fast stringify avoids deep key-sorting overhead on this hot path.
-  return `${agentId}:${JSON.stringify(config)}`;
+  return `${agentId}:${stableSerialize(config)}`;
+}
+
+function stableSerialize(value: unknown): string {
+  return JSON.stringify(sortValue(value));
+}
+
+function sortValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sortValue(entry));
+  }
+  if (value && typeof value === "object") {
+    const sortedEntries = Object.keys(value as Record<string, unknown>)
+      .toSorted((a, b) => a.localeCompare(b))
+      .map((key) => [key, sortValue((value as Record<string, unknown>)[key])]);
+    return Object.fromEntries(sortedEntries);
+  }
+  return value;
 }

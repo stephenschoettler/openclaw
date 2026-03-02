@@ -4,12 +4,12 @@ import { Type } from "@sinclair/typebox";
 import type { ExecAsk, ExecHost, ExecSecurity } from "../infra/exec-approvals.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { isDangerousHostEnvVarName } from "../infra/host-env-security.js";
-import { findPathKey, mergePathPrepend } from "../infra/path-prepend.js";
+import { mergePathPrepend } from "../infra/path-prepend.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import type { ProcessSession } from "./bash-process-registry.js";
 import type { ExecToolDetails } from "./bash-tools.exec-types.js";
 import type { BashSandboxConfig } from "./bash-tools.shared.js";
-export { applyPathPrepend, findPathKey, normalizePathPrepend } from "../infra/path-prepend.js";
+export { applyPathPrepend, normalizePathPrepend } from "../infra/path-prepend.js";
 import { logWarn } from "../logger.js";
 import type { ManagedRun } from "../process/supervisor/index.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
@@ -29,23 +29,6 @@ import {
 import { buildCursorPositionResponse, stripDsrRequests } from "./pty-dsr.js";
 import { getShellConfig, sanitizeBinaryOutput } from "./shell-utils.js";
 
-// Sanitize inherited host env before merge so dangerous variables from process.env
-// are not propagated into non-sandboxed executions.
-export function sanitizeHostBaseEnv(env: Record<string, string>): Record<string, string> {
-  const sanitized: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    const upperKey = key.toUpperCase();
-    if (upperKey === "PATH") {
-      sanitized[key] = value;
-      continue;
-    }
-    if (isDangerousHostEnvVarName(upperKey)) {
-      continue;
-    }
-    sanitized[key] = value;
-  }
-  return sanitized;
-}
 // Centralized sanitization helper.
 // Throws an error if dangerous variables or PATH modifications are detected on the host.
 export function validateHostEnv(env: Record<string, string>): void {
@@ -210,10 +193,9 @@ export function applyShellPath(env: Record<string, string>, shellPath?: string |
   if (entries.length === 0) {
     return;
   }
-  const pathKey = findPathKey(env);
-  const merged = mergePathPrepend(env[pathKey], entries);
+  const merged = mergePathPrepend(env.PATH, entries);
   if (merged) {
-    env[pathKey] = merged;
+    env.PATH = merged;
   }
 }
 
@@ -292,10 +274,6 @@ export async function runExecProcess(opts: {
   const sessionId = createSessionSlug();
   const execCommand = opts.execCommand ?? opts.command;
   const supervisor = getProcessSupervisor();
-  const shellRuntimeEnv: Record<string, string> = {
-    ...opts.env,
-    OPENCLAW_SHELL: "exec",
-  };
 
   const session: ProcessSession = {
     id: sessionId,
@@ -390,7 +368,7 @@ export async function runExecProcess(opts: {
             containerName: opts.sandbox.containerName,
             command: execCommand,
             workdir: opts.containerWorkdir ?? opts.sandbox.containerWorkdir,
-            env: shellRuntimeEnv,
+            env: opts.env,
             tty: opts.usePty,
           }),
         ],
@@ -405,14 +383,14 @@ export async function runExecProcess(opts: {
         mode: "pty" as const,
         ptyCommand: execCommand,
         childFallbackArgv: childArgv,
-        env: shellRuntimeEnv,
+        env: opts.env,
         stdinMode: "pipe-open" as const,
       };
     }
     return {
       mode: "child" as const,
       argv: childArgv,
-      env: shellRuntimeEnv,
+      env: opts.env,
       stdinMode: "pipe-closed" as const,
     };
   })();

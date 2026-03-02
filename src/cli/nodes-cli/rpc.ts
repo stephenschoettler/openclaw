@@ -73,10 +73,6 @@ export function unauthorizedHintForMessage(message: string): string | null {
 }
 
 export async function resolveNodeId(opts: NodesRpcOpts, query: string) {
-  return (await resolveNode(opts, query)).nodeId;
-}
-
-export async function resolveNode(opts: NodesRpcOpts, query: string): Promise<NodeListNode> {
   const q = String(query ?? "").trim();
   if (!q) {
     throw new Error("node required");
@@ -97,6 +93,5 @@ export async function resolveNode(opts: NodesRpcOpts, query: string): Promise<No
       remoteIp: n.remoteIp,
     }));
   }
-  const nodeId = resolveNodeIdFromCandidates(nodes, q);
-  return nodes.find((node) => node.nodeId === nodeId) ?? { nodeId };
+  return resolveNodeIdFromCandidates(nodes, q);
 }

@@ -5,10 +5,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 const TEST_GATEWAY_TOKEN = "test-gateway-token-1234567890";
 
 let cfg: Record<string, unknown> = {};
-const alwaysAuthorized = async () => ({ ok: true as const });
-const disableDefaultMemorySlot = () => false;
-const noPluginToolMeta = () => undefined;
-const noWarnLog = () => {};
 
 vi.mock("../config/config.js", () => ({
   loadConfig: () => cfg,
@@ -19,19 +15,19 @@ vi.mock("../config/sessions.js", () => ({
 }));
 
 vi.mock("./auth.js", () => ({
-  authorizeHttpGatewayConnect: alwaysAuthorized,
+  authorizeHttpGatewayConnect: async () => ({ ok: true }),
 }));
 
 vi.mock("../logger.js", () => ({
-  logWarn: noWarnLog,
+  logWarn: () => {},
 }));
 
 vi.mock("../plugins/config-state.js", () => ({
-  isTestDefaultMemorySlotDisabled: disableDefaultMemorySlot,
+  isTestDefaultMemorySlotDisabled: () => false,
 }));
 
 vi.mock("../plugins/tools.js", () => ({
-  getPluginToolMeta: noPluginToolMeta,
+  getPluginToolMeta: () => undefined,
 }));
 
 vi.mock("../agents/openclaw-tools.js", () => {
@@ -123,24 +119,5 @@ describe("tools invoke HTTP denylist", () => {
     const cronRes = await invoke("cron");
 
     expect(cronRes.status).toBe(200);
-  });
-
-  it("keeps cron available under coding profile without exposing gateway", async () => {
-    cfg = {
-      tools: {
-        profile: "coding",
-      },
-      gateway: {
-        tools: {
-          allow: ["cron"],
-        },
-      },
-    };
-
-    const cronRes = await invoke("cron");
-    const gatewayRes = await invoke("gateway");
-
-    expect(cronRes.status).toBe(200);
-    expect(gatewayRes.status).toBe(404);
   });
 });

@@ -509,21 +509,39 @@ describe("CronService", () => {
     await store.cleanup();
   });
 
-  it("rejects sessionTarget main for non-default agents at creation time", async () => {
+  it("passes agentId + sessionKey to runHeartbeatOnce for main-session wakeMode now jobs", async () => {
     const runHeartbeatOnce = vi.fn(async () => ({ status: "ran" as const, durationMs: 1 }));
 
-    const { store, cron } = await createWakeModeNowMainHarness({
-      runHeartbeatOnce,
-      wakeNowHeartbeatBusyMaxWaitMs: 1,
-      wakeNowHeartbeatBusyRetryDelayMs: 2,
+    const { store, cron, enqueueSystemEvent, requestHeartbeatNow } =
+      await createWakeModeNowMainHarness({
+        runHeartbeatOnce,
+        // Perf: avoid advancing fake timers by 2+ minutes for the busy-heartbeat fallback.
+        wakeNowHeartbeatBusyMaxWaitMs: 1,
+        wakeNowHeartbeatBusyRetryDelayMs: 2,
+      });
+
+    const sessionKey = "agent:ops:discord:channel:alerts";
+    const job = await addWakeModeNowMainSystemEventJob(cron, {
+      name: "wakeMode now with agent",
+      agentId: "ops",
+      sessionKey,
     });
 
-    await expect(
-      addWakeModeNowMainSystemEventJob(cron, {
-        name: "wakeMode now with agent",
+    await cron.run(job.id, "force");
+
+    expect(runHeartbeatOnce).toHaveBeenCalledTimes(1);
+    expect(runHeartbeatOnce).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: `cron:${job.id}`,
         agentId: "ops",
+        sessionKey,
       }),
-    ).rejects.toThrow('cron: sessionTarget "main" is only valid for the default agent');
+    );
+    expect(requestHeartbeatNow).not.toHaveBeenCalled();
+    expect(enqueueSystemEvent).toHaveBeenCalledWith(
+      "hello",
+      expect.objectContaining({ agentId: "ops", sessionKey }),
+    );
 
     cron.stop();
     await store.cleanup();
@@ -598,28 +616,6 @@ describe("CronService", () => {
       cron,
       events,
       name: "weekly delivered",
-      status: "ok",
-    });
-    expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);
-    expect(enqueueSystemEvent).not.toHaveBeenCalled();
-    expect(requestHeartbeatNow).not.toHaveBeenCalled();
-    cron.stop();
-    await store.cleanup();
-  });
-
-  it("does not post isolated summary to main when announce delivery was attempted", async () => {
-    const runIsolatedAgentJob = vi.fn(async () => ({
-      status: "ok" as const,
-      summary: "done",
-      delivered: false,
-      deliveryAttempted: true,
-    }));
-    const { store, cron, enqueueSystemEvent, requestHeartbeatNow, events } =
-      await createIsolatedAnnounceHarness(runIsolatedAgentJob);
-    await runIsolatedAnnounceJobAndWait({
-      cron,
-      events,
-      name: "weekly attempted",
       status: "ok",
     });
     expect(runIsolatedAgentJob).toHaveBeenCalledTimes(1);

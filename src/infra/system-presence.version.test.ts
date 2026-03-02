@@ -7,8 +7,12 @@ async function withPresenceModule<T>(
 ): Promise<T> {
   return withEnvAsync(env, async () => {
     vi.resetModules();
-    const module = await import("./system-presence.js");
-    return await run(module);
+    try {
+      const module = await import("./system-presence.js");
+      return await run(module);
+    } finally {
+      vi.resetModules();
+    }
   });
 }
 

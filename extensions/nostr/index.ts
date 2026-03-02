@@ -61,12 +61,7 @@ const plugin = {
       log: api.logger,
     });
 
-    api.registerHttpRoute({
-      path: "/api/channels/nostr",
-      auth: "gateway",
-      match: "prefix",
-      handler: httpHandler,
-    });
+    api.registerHttpHandler(httpHandler);
   },
 };
 

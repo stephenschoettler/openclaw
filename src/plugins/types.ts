@@ -61,14 +61,8 @@ export type OpenClawPluginToolContext = {
   agentDir?: string;
   agentId?: string;
   sessionKey?: string;
-  /** Ephemeral session UUID — regenerated on /new and /reset. Use for per-conversation isolation. */
-  sessionId?: string;
   messageChannel?: string;
   agentAccountId?: string;
-  /** Trusted sender id from inbound context (runtime-provided, not tool args). */
-  requesterSenderId?: string;
-  /** Whether the trusted sender is an owner. */
-  senderIsOwner?: boolean;
   sandboxed?: boolean;
 };
 
@@ -196,21 +190,15 @@ export type OpenClawPluginCommandDefinition = {
   handler: PluginCommandHandler;
 };
 
-export type OpenClawPluginHttpRouteAuth = "gateway" | "plugin";
-export type OpenClawPluginHttpRouteMatch = "exact" | "prefix";
+export type OpenClawPluginHttpHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+) => Promise<boolean> | boolean;
 
 export type OpenClawPluginHttpRouteHandler = (
   req: IncomingMessage,
   res: ServerResponse,
-) => Promise<boolean | void> | boolean | void;
-
-export type OpenClawPluginHttpRouteParams = {
-  path: string;
-  handler: OpenClawPluginHttpRouteHandler;
-  auth: OpenClawPluginHttpRouteAuth;
-  match?: OpenClawPluginHttpRouteMatch;
-  replaceExisting?: boolean;
-};
+) => Promise<void> | void;
 
 export type OpenClawPluginCliContext = {
   program: Command;
@@ -273,7 +261,8 @@ export type OpenClawPluginApi = {
     handler: InternalHookHandler,
     opts?: OpenClawPluginHookOptions,
   ) => void;
-  registerHttpRoute: (params: OpenClawPluginHttpRouteParams) => void;
+  registerHttpHandler: (handler: OpenClawPluginHttpHandler) => void;
+  registerHttpRoute: (params: { path: string; handler: OpenClawPluginHttpRouteHandler }) => void;
   registerChannel: (registration: OpenClawPluginChannelRegistration | ChannelPlugin) => void;
   registerGatewayMethod: (method: string, handler: GatewayRequestHandler) => void;
   registerCli: (registrar: OpenClawPluginCliRegistrar, opts?: { commands?: string[] }) => void;
@@ -484,8 +473,6 @@ export type PluginHookMessageSentEvent = {
 export type PluginHookToolContext = {
   agentId?: string;
   sessionKey?: string;
-  /** Ephemeral session UUID — regenerated on /new and /reset. */
-  sessionId?: string;
   toolName: string;
 };
 
@@ -574,7 +561,8 @@ export type PluginHookSubagentContext = {
 
 export type PluginHookSubagentTargetKind = "subagent" | "acp";
 
-type PluginHookSubagentSpawnBase = {
+// subagent_spawning hook
+export type PluginHookSubagentSpawningEvent = {
   childSessionKey: string;
   agentId: string;
   label?: string;
@@ -587,9 +575,6 @@ type PluginHookSubagentSpawnBase = {
   };
   threadRequested: boolean;
 };
-
-// subagent_spawning hook
-export type PluginHookSubagentSpawningEvent = PluginHookSubagentSpawnBase;
 
 export type PluginHookSubagentSpawningResult =
   | {
@@ -626,8 +611,19 @@ export type PluginHookSubagentDeliveryTargetResult = {
 };
 
 // subagent_spawned hook
-export type PluginHookSubagentSpawnedEvent = PluginHookSubagentSpawnBase & {
+export type PluginHookSubagentSpawnedEvent = {
   runId: string;
+  childSessionKey: string;
+  agentId: string;
+  label?: string;
+  mode: "run" | "session";
+  requester?: {
+    channel?: string;
+    accountId?: string;
+    to?: string;
+    threadId?: string | number;
+  };
+  threadRequested: boolean;
 };
 
 // subagent_ended hook

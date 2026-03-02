@@ -2,14 +2,8 @@ import type { ChannelType, Client, Message } from "@buape/carbon";
 import { StickerFormatType, type APIAttachment, type APIStickerItem } from "discord-api-types/v10";
 import { buildMediaPayload } from "../../channels/plugins/media-payload.js";
 import { logVerbose } from "../../globals.js";
-import type { SsrFPolicy } from "../../infra/net/ssrf.js";
-import { fetchRemoteMedia, type FetchLike } from "../../media/fetch.js";
+import { fetchRemoteMedia } from "../../media/fetch.js";
 import { saveMediaBuffer } from "../../media/store.js";
-
-const DISCORD_MEDIA_SSRF_POLICY: SsrFPolicy = {
-  allowedHostnames: ["cdn.discordapp.com", "media.discordapp.net"],
-  allowRfc2544BenchmarkRange: true,
-};
 
 export type DiscordMediaInfo = {
   path: string;
@@ -167,7 +161,6 @@ export function hasDiscordMessageStickers(message: Message): boolean {
 export async function resolveMediaList(
   message: Message,
   maxBytes: number,
-  fetchImpl?: FetchLike,
 ): Promise<DiscordMediaInfo[]> {
   const out: DiscordMediaInfo[] = [];
   await appendResolvedMediaFromAttachments({
@@ -175,14 +168,12 @@ export async function resolveMediaList(
     maxBytes,
     out,
     errorPrefix: "discord: failed to download attachment",
-    fetchImpl,
   });
   await appendResolvedMediaFromStickers({
     stickers: resolveDiscordMessageStickers(message),
     maxBytes,
     out,
     errorPrefix: "discord: failed to download sticker",
-    fetchImpl,
   });
   return out;
 }
@@ -190,7 +181,6 @@ export async function resolveMediaList(
 export async function resolveForwardedMediaList(
   message: Message,
   maxBytes: number,
-  fetchImpl?: FetchLike,
 ): Promise<DiscordMediaInfo[]> {
   const snapshots = resolveDiscordMessageSnapshots(message);
   if (snapshots.length === 0) {
@@ -203,14 +193,12 @@ export async function resolveForwardedMediaList(
       maxBytes,
       out,
       errorPrefix: "discord: failed to download forwarded attachment",
-      fetchImpl,
     });
     await appendResolvedMediaFromStickers({
       stickers: snapshot.message ? resolveDiscordSnapshotStickers(snapshot.message) : [],
       maxBytes,
       out,
       errorPrefix: "discord: failed to download forwarded sticker",
-      fetchImpl,
     });
   }
   return out;
@@ -221,7 +209,6 @@ async function appendResolvedMediaFromAttachments(params: {
   maxBytes: number;
   out: DiscordMediaInfo[];
   errorPrefix: string;
-  fetchImpl?: FetchLike;
 }) {
   const attachments = params.attachments;
   if (!attachments || attachments.length === 0) {
@@ -233,8 +220,6 @@ async function appendResolvedMediaFromAttachments(params: {
         url: attachment.url,
         filePathHint: attachment.filename ?? attachment.url,
         maxBytes: params.maxBytes,
-        fetchImpl: params.fetchImpl,
-        ssrfPolicy: DISCORD_MEDIA_SSRF_POLICY,
       });
       const saved = await saveMediaBuffer(
         fetched.buffer,
@@ -250,12 +235,6 @@ async function appendResolvedMediaFromAttachments(params: {
     } catch (err) {
       const id = attachment.id ?? attachment.url;
       logVerbose(`${params.errorPrefix} ${id}: ${String(err)}`);
-      // Preserve attachment context even when remote fetch is blocked/fails.
-      params.out.push({
-        path: attachment.url,
-        contentType: attachment.content_type,
-        placeholder: inferPlaceholder(attachment),
-      });
     }
   }
 }
@@ -312,25 +291,11 @@ function formatStickerError(err: unknown): string {
   }
 }
 
-function inferStickerContentType(sticker: APIStickerItem): string | undefined {
-  switch (sticker.format_type) {
-    case StickerFormatType.GIF:
-      return "image/gif";
-    case StickerFormatType.APNG:
-    case StickerFormatType.Lottie:
-    case StickerFormatType.PNG:
-      return "image/png";
-    default:
-      return undefined;
-  }
-}
-
 async function appendResolvedMediaFromStickers(params: {
   stickers?: APIStickerItem[] | null;
   maxBytes: number;
   out: DiscordMediaInfo[];
   errorPrefix: string;
-  fetchImpl?: FetchLike;
 }) {
   const stickers = params.stickers;
   if (!stickers || stickers.length === 0) {
@@ -345,8 +310,6 @@ async function appendResolvedMediaFromStickers(params: {
           url: candidate.url,
           filePathHint: candidate.fileName,
           maxBytes: params.maxBytes,
-          fetchImpl: params.fetchImpl,
-          ssrfPolicy: DISCORD_MEDIA_SSRF_POLICY,
         });
         const saved = await saveMediaBuffer(
           fetched.buffer,
@@ -367,14 +330,6 @@ async function appendResolvedMediaFromStickers(params: {
     }
     if (lastError) {
       logVerbose(`${params.errorPrefix} ${sticker.id}: ${formatStickerError(lastError)}`);
-      const fallback = candidates[0];
-      if (fallback) {
-        params.out.push({
-          path: fallback.url,
-          contentType: inferStickerContentType(sticker),
-          placeholder: "<media:sticker>",
-        });
-      }
     }
   }
 }
@@ -438,32 +393,17 @@ function buildDiscordMediaPlaceholder(params: {
   return attachmentText || stickerText || "";
 }
 
-export function resolveDiscordEmbedText(
-  embed?: { title?: string | null; description?: string | null } | null,
-): string {
-  const title = embed?.title?.trim() || "";
-  const description = embed?.description?.trim() || "";
-  if (title && description) {
-    return `${title}\n${description}`;
-  }
-  return title || description || "";
-}
-
 export function resolveDiscordMessageText(
   message: Message,
   options?: { fallbackText?: string; includeForwarded?: boolean },
 ): string {
-  const embedText = resolveDiscordEmbedText(
-    (message.embeds?.[0] as { title?: string | null; description?: string | null } | undefined) ??
-      null,
-  );
   const baseText =
     message.content?.trim() ||
     buildDiscordMediaPlaceholder({
       attachments: message.attachments ?? undefined,
       stickers: resolveDiscordMessageStickers(message),
     }) ||
-    embedText ||
+    message.embeds?.[0]?.description ||
     options?.fallbackText?.trim() ||
     "";
   if (!options?.includeForwarded) {
@@ -527,7 +467,8 @@ function resolveDiscordSnapshotMessageText(snapshot: DiscordSnapshotMessage): st
     attachments: snapshot.attachments ?? undefined,
     stickers: resolveDiscordSnapshotStickers(snapshot),
   });
-  const embedText = resolveDiscordEmbedText(snapshot.embeds?.[0]);
+  const embed = snapshot.embeds?.[0];
+  const embedText = embed?.description?.trim() || embed?.title?.trim() || "";
   return content || attachmentText || embedText || "";
 }
 

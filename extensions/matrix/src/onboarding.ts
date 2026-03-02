@@ -1,7 +1,6 @@
 import type { DmPolicy } from "openclaw/plugin-sdk";
 import {
   addWildcardAllowFrom,
-  formatResolvedUnresolvedNote,
   formatDocsLink,
   mergeAllowFromEntries,
   promptChannelAccessConfig,
@@ -409,12 +408,18 @@ export const matrixOnboardingAdapter: ChannelOnboardingAdapter = {
               }
             }
             roomKeys = [...resolvedIds, ...unresolved.map((entry) => entry.trim()).filter(Boolean)];
-            const resolution = formatResolvedUnresolvedNote({
-              resolved: resolvedIds,
-              unresolved,
-            });
-            if (resolution) {
-              await prompter.note(resolution, "Matrix rooms");
+            if (resolvedIds.length > 0 || unresolved.length > 0) {
+              await prompter.note(
+                [
+                  resolvedIds.length > 0 ? `Resolved: ${resolvedIds.join(", ")}` : undefined,
+                  unresolved.length > 0
+                    ? `Unresolved (kept as typed): ${unresolved.join(", ")}`
+                    : undefined,
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+                "Matrix rooms",
+              );
             }
           } catch (err) {
             await prompter.note(

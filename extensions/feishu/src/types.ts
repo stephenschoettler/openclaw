@@ -36,7 +36,7 @@ export type FeishuMessageContext = {
   senderId: string;
   senderOpenId: string;
   senderName?: string;
-  chatType: "p2p" | "group" | "private";
+  chatType: "p2p" | "group";
   mentionedBot: boolean;
   rootId?: string;
   parentId?: string;
@@ -67,7 +67,6 @@ export type FeishuMediaInfo = {
 
 export type FeishuToolsConfig = {
   doc?: boolean;
-  chat?: boolean;
   wiki?: boolean;
   drive?: boolean;
   perm?: boolean;

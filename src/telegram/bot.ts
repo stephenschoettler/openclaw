@@ -40,7 +40,6 @@ import {
   resolveTelegramStreamMode,
 } from "./bot/helpers.js";
 import { resolveTelegramFetch } from "./fetch.js";
-import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
 
 export type TelegramBotOptions = {
   token: string;
@@ -270,7 +269,12 @@ export function createTelegramBot(opts: TelegramBotOptions) {
   const dmPolicy = telegramCfg.dmPolicy ?? "pairing";
   const allowFrom = opts.allowFrom ?? telegramCfg.allowFrom;
   const groupAllowFrom =
-    opts.groupAllowFrom ?? telegramCfg.groupAllowFrom ?? telegramCfg.allowFrom ?? allowFrom;
+    opts.groupAllowFrom ??
+    telegramCfg.groupAllowFrom ??
+    (telegramCfg.allowFrom && telegramCfg.allowFrom.length > 0
+      ? telegramCfg.allowFrom
+      : undefined) ??
+    (opts.allowFrom && opts.allowFrom.length > 0 ? opts.allowFrom : undefined);
   const replyToMode = opts.replyToMode ?? telegramCfg.replyToMode ?? "off";
   const nativeEnabled = resolveNativeCommandsEnabled({
     providerId: "telegram",
@@ -334,43 +338,15 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     });
   const resolveTelegramGroupConfig = (chatId: string | number, messageThreadId?: number) => {
     const groups = telegramCfg.groups;
-    const direct = telegramCfg.direct;
-    const chatIdStr = String(chatId);
-    const isDm = !chatIdStr.startsWith("-");
-
-    if (isDm) {
-      const directConfig = direct?.[chatIdStr] ?? direct?.["*"];
-      if (directConfig) {
-        const topicConfig =
-          messageThreadId != null ? directConfig.topics?.[String(messageThreadId)] : undefined;
-        return { groupConfig: directConfig, topicConfig };
-      }
-      // DMs without direct config: don't fall through to groups lookup
-      return { groupConfig: undefined, topicConfig: undefined };
-    }
-
     if (!groups) {
       return { groupConfig: undefined, topicConfig: undefined };
     }
-    const groupConfig = groups[chatIdStr] ?? groups["*"];
+    const groupKey = String(chatId);
+    const groupConfig = groups[groupKey] ?? groups["*"];
     const topicConfig =
       messageThreadId != null ? groupConfig?.topics?.[String(messageThreadId)] : undefined;
     return { groupConfig, topicConfig };
   };
-
-  // Global sendChatAction handler with 401 backoff / circuit breaker (issue #27092).
-  // Created BEFORE the message processor so it can be injected into every message context.
-  // Shared across all message contexts for this account so that consecutive 401s
-  // from ANY chat are tracked together — prevents infinite retry storms.
-  const sendChatActionHandler = createTelegramSendChatActionHandler({
-    sendChatActionFn: (chatId, action, threadParams) =>
-      bot.api.sendChatAction(
-        chatId,
-        action,
-        threadParams as Parameters<typeof bot.api.sendChatAction>[2],
-      ),
-    logger: (message) => logVerbose(`telegram: ${message}`),
-  });
 
   const processMessage = createTelegramMessageProcessor({
     bot,
@@ -387,7 +363,6 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     resolveGroupActivation,
     resolveGroupRequireMention,
     resolveTelegramGroupConfig,
-    sendChatActionHandler,
     runtime,
     replyToMode,
     streamMode,
@@ -423,7 +398,6 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     runtime,
     mediaMaxBytes,
     telegramCfg,
-    allowFrom,
     groupAllowFrom,
     resolveGroupPolicy,
     resolveTelegramGroupConfig,

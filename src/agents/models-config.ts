@@ -15,12 +15,6 @@ type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 
 const DEFAULT_MODE: NonNullable<ModelsConfig["mode"]> = "merge";
 
-function resolvePreferredTokenLimit(explicitValue: number, implicitValue: number): number {
-  // Keep catalog refresh behavior for stale low values while preserving
-  // intentional larger user overrides (for example Ollama >128k contexts).
-  return explicitValue > implicitValue ? explicitValue : implicitValue;
-}
-
 function mergeProviderModels(implicit: ProviderConfig, explicit: ProviderConfig): ProviderConfig {
   const implicitModels = Array.isArray(implicit.models) ? implicit.models : [];
   const explicitModels = Array.isArray(explicit.models) ? explicit.models : [];
@@ -61,11 +55,8 @@ function mergeProviderModels(implicit: ProviderConfig, explicit: ProviderConfig)
       ...explicitModel,
       input: implicitModel.input,
       reasoning: "reasoning" in explicitModel ? explicitModel.reasoning : implicitModel.reasoning,
-      contextWindow: resolvePreferredTokenLimit(
-        explicitModel.contextWindow,
-        implicitModel.contextWindow,
-      ),
-      maxTokens: resolvePreferredTokenLimit(explicitModel.maxTokens, implicitModel.maxTokens),
+      contextWindow: implicitModel.contextWindow,
+      maxTokens: implicitModel.maxTokens,
     };
   });
 
@@ -151,30 +142,7 @@ export async function ensureOpenClawModelsJson(
         string,
         NonNullable<ModelsConfig["providers"]>[string]
       >;
-      mergedProviders = {};
-      for (const [key, entry] of Object.entries(existingProviders)) {
-        mergedProviders[key] = entry;
-      }
-      for (const [key, newEntry] of Object.entries(providers)) {
-        const existing = existingProviders[key] as
-          | (NonNullable<ModelsConfig["providers"]>[string] & {
-              apiKey?: string;
-              baseUrl?: string;
-            })
-          | undefined;
-        if (existing) {
-          const preserved: Record<string, unknown> = {};
-          if (typeof existing.apiKey === "string" && existing.apiKey) {
-            preserved.apiKey = existing.apiKey;
-          }
-          if (typeof existing.baseUrl === "string" && existing.baseUrl) {
-            preserved.baseUrl = existing.baseUrl;
-          }
-          mergedProviders[key] = { ...newEntry, ...preserved };
-        } else {
-          mergedProviders[key] = newEntry;
-        }
-      }
+      mergedProviders = { ...existingProviders, ...providers };
     }
   }
 

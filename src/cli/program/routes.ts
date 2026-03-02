@@ -3,15 +3,13 @@ import { getFlagValue, getPositiveIntFlagValue, getVerboseFlag, hasFlag } from "
 
 export type RouteSpec = {
   match: (path: string[]) => boolean;
-  loadPlugins?: boolean | ((argv: string[]) => boolean);
+  loadPlugins?: boolean;
   run: (argv: string[]) => Promise<boolean>;
 };
 
 const routeHealth: RouteSpec = {
   match: (path) => path[0] === "health",
-  // `health --json` only relays gateway RPC output and does not need local plugin metadata.
-  // Keep plugin preload for text output where channel diagnostics/logSelfId are rendered.
-  loadPlugins: (argv) => !hasFlag(argv, "--json"),
+  loadPlugins: true,
   run: async (argv) => {
     const json = hasFlag(argv, "--json");
     const verbose = getVerboseFlag(argv, { includeDebug: true });
@@ -27,8 +25,6 @@ const routeHealth: RouteSpec = {
 
 const routeStatus: RouteSpec = {
   match: (path) => path[0] === "status",
-  // Status runs security audit with channel checks in both text and JSON output,
-  // so plugin registry must be ready for consistent findings.
   loadPlugins: true,
   run: async (argv) => {
     const json = hasFlag(argv, "--json");

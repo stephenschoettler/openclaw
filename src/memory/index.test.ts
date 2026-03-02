@@ -98,7 +98,6 @@ describe("memory index", () => {
     model?: string;
     vectorEnabled?: boolean;
     cacheEnabled?: boolean;
-    minScore?: number;
     hybrid?: { enabled: boolean; vectorWeight?: number; textWeight?: number };
   }): TestCfg {
     return {
@@ -113,7 +112,7 @@ describe("memory index", () => {
             chunking: { tokens: 4000, overlap: 0 },
             sync: { watch: false, onSessionStart: false, onSearch: true },
             query: {
-              minScore: params.minScore ?? 0,
+              minScore: 0,
               hybrid: params.hybrid ?? { enabled: false },
             },
             cache: params.cacheEnabled ? { enabled: true } : undefined,
@@ -125,17 +124,6 @@ describe("memory index", () => {
         list: [{ id: "main", default: true }],
       },
     };
-  }
-
-  function requireManager(
-    result: Awaited<ReturnType<typeof getMemorySearchManager>>,
-    missingMessage = "manager missing",
-  ): MemoryIndexManager {
-    expect(result.manager).not.toBeNull();
-    if (!result.manager) {
-      throw new Error(missingMessage);
-    }
-    return result.manager as MemoryIndexManager;
   }
 
   async function getPersistentManager(cfg: TestCfg): Promise<MemoryIndexManager> {
@@ -150,24 +138,15 @@ describe("memory index", () => {
     }
 
     const result = await getMemorySearchManager({ cfg, agentId: "main" });
-    const manager = requireManager(result);
+    expect(result.manager).not.toBeNull();
+    if (!result.manager) {
+      throw new Error("manager missing");
+    }
+    const manager = result.manager as MemoryIndexManager;
     managersByStorePath.set(storePath, manager);
     managersForCleanup.add(manager);
     resetManagerForTest(manager);
     return manager;
-  }
-
-  async function expectHybridKeywordSearchFindsMemory(cfg: TestCfg) {
-    const manager = await getPersistentManager(cfg);
-    const status = manager.status();
-    if (!status.fts?.available) {
-      return;
-    }
-
-    await manager.sync({ reason: "test" });
-    const results = await manager.search("zebra");
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]?.path).toContain("memory/2026-01-12.md");
   }
 
   it("indexes memory files and searches", async () => {
@@ -198,19 +177,26 @@ describe("memory index", () => {
     const cfg = createCfg({ storePath: indexStatusPath });
 
     const first = await getMemorySearchManager({ cfg, agentId: "main" });
-    const firstManager = requireManager(first);
-    await firstManager.sync?.({ reason: "test" });
-    await firstManager.close?.();
+    expect(first.manager).not.toBeNull();
+    if (!first.manager) {
+      throw new Error("manager missing");
+    }
+    await first.manager.sync?.({ reason: "test" });
+    await first.manager.close?.();
 
     const statusOnly = await getMemorySearchManager({
       cfg,
       agentId: "main",
       purpose: "status",
     });
-    const statusManager = requireManager(statusOnly, "status manager missing");
-    const status = statusManager.status();
+    expect(statusOnly.manager).not.toBeNull();
+    if (!statusOnly.manager) {
+      throw new Error("status manager missing");
+    }
+
+    const status = statusOnly.manager.status();
     expect(status.dirty).toBe(false);
-    await statusManager.close?.();
+    await statusOnly.manager.close?.();
   });
 
   it("reindexes sessions when source config adds sessions to an existing index", async () => {
@@ -257,25 +243,31 @@ describe("memory index", () => {
 
     try {
       const first = await getMemorySearchManager({ cfg: firstCfg, agentId: "main" });
-      const firstManager = requireManager(first);
-      await firstManager.sync?.({ reason: "test" });
-      const firstStatus = firstManager.status();
+      expect(first.manager).not.toBeNull();
+      if (!first.manager) {
+        throw new Error("manager missing");
+      }
+      await first.manager.sync?.({ reason: "test" });
+      const firstStatus = first.manager.status();
       expect(
         firstStatus.sourceCounts?.find((entry) => entry.source === "sessions")?.files ?? 0,
       ).toBe(0);
-      await firstManager.close?.();
+      await first.manager.close?.();
 
       const second = await getMemorySearchManager({ cfg: secondCfg, agentId: "main" });
-      const secondManager = requireManager(second);
-      await secondManager.sync?.({ reason: "test" });
-      const secondStatus = secondManager.status();
+      expect(second.manager).not.toBeNull();
+      if (!second.manager) {
+        throw new Error("manager missing");
+      }
+      await second.manager.sync?.({ reason: "test" });
+      const secondStatus = second.manager.status();
       expect(secondStatus.sourceCounts?.find((entry) => entry.source === "sessions")?.files).toBe(
         1,
       );
       expect(
         secondStatus.sourceCounts?.find((entry) => entry.source === "sessions")?.chunks ?? 0,
       ).toBeGreaterThan(0);
-      await secondManager.close?.();
+      await second.manager.close?.();
     } finally {
       if (previousStateDir === undefined) {
         delete process.env.OPENCLAW_STATE_DIR;
@@ -309,10 +301,13 @@ describe("memory index", () => {
       },
       agentId: "main",
     });
-    const firstManager = requireManager(first);
-    await firstManager.sync?.({ reason: "test" });
+    expect(first.manager).not.toBeNull();
+    if (!first.manager) {
+      throw new Error("manager missing");
+    }
+    await first.manager.sync?.({ reason: "test" });
     const callsAfterFirstSync = embedBatchCalls;
-    await firstManager.close?.();
+    await first.manager.close?.();
 
     const second = await getMemorySearchManager({
       cfg: {
@@ -330,12 +325,15 @@ describe("memory index", () => {
       },
       agentId: "main",
     });
-    const secondManager = requireManager(second);
-    await secondManager.sync?.({ reason: "test" });
+    expect(second.manager).not.toBeNull();
+    if (!second.manager) {
+      throw new Error("manager missing");
+    }
+    await second.manager.sync?.({ reason: "test" });
     expect(embedBatchCalls).toBeGreaterThan(callsAfterFirstSync);
-    const status = secondManager.status();
+    const status = second.manager.status();
     expect(status.files).toBeGreaterThan(0);
-    await secondManager.close?.();
+    await second.manager.close?.();
   });
 
   it("reuses cached embeddings on forced reindex", async () => {
@@ -352,22 +350,21 @@ describe("memory index", () => {
   });
 
   it("finds keyword matches via hybrid search when query embedding is zero", async () => {
-    await expectHybridKeywordSearchFindsMemory(
-      createCfg({
-        storePath: indexMainPath,
-        hybrid: { enabled: true, vectorWeight: 0, textWeight: 1 },
-      }),
-    );
-  });
+    const cfg = createCfg({
+      storePath: indexMainPath,
+      hybrid: { enabled: true, vectorWeight: 0, textWeight: 1 },
+    });
+    const manager = await getPersistentManager(cfg);
 
-  it("preserves keyword-only hybrid hits when minScore exceeds text weight", async () => {
-    await expectHybridKeywordSearchFindsMemory(
-      createCfg({
-        storePath: indexMainPath,
-        minScore: 0.35,
-        hybrid: { enabled: true, vectorWeight: 0.7, textWeight: 0.3 },
-      }),
-    );
+    const status = manager.status();
+    if (!status.fts?.available) {
+      return;
+    }
+
+    await manager.sync({ reason: "test" });
+    const results = await manager.search("zebra");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.path).toContain("memory/2026-01-12.md");
   });
 
   it("reports vector availability after probe", async () => {

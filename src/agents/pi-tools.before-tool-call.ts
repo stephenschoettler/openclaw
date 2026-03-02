@@ -9,8 +9,6 @@ import type { AnyAgentTool } from "./tools/common.js";
 export type HookContext = {
   agentId?: string;
   sessionKey?: string;
-  /** Ephemeral session UUID — regenerated on /new and /reset. */
-  sessionId?: string;
   loopDetection?: ToolLoopDetectionConfig;
 };
 
@@ -150,7 +148,6 @@ export async function runBeforeToolCallHook(args: {
         toolName,
         agentId: args.ctx?.agentId,
         sessionKey: args.ctx?.sessionKey,
-        sessionId: args.ctx?.sessionId,
       },
     );
 

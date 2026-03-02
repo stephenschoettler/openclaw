@@ -14,10 +14,10 @@ import { dispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/pr
 import { listSkillCommandsForAgents } from "../auto-reply/skill-commands.js";
 import { resolveCommandAuthorizedFromAuthorizers } from "../channels/command-gating.js";
 import { createReplyPrefixOptions } from "../channels/reply-prefix.js";
-import { recordInboundSessionMetaSafe } from "../channels/session-meta.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ChannelGroupPolicy } from "../config/group-policy.js";
 import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
+import { recordSessionMetaFromInbound, resolveStorePath } from "../config/sessions.js";
 import {
   normalizeTelegramCommandName,
   resolveTelegramCustomCommands,
@@ -26,7 +26,6 @@ import {
 import type {
   ReplyToMode,
   TelegramAccountConfig,
-  TelegramDirectConfig,
   TelegramGroupConfig,
   TelegramTopicConfig,
 } from "../config/types.js";
@@ -42,8 +41,7 @@ import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { withTelegramApiErrorLogging } from "./api-logging.js";
-import { isSenderAllowed, normalizeDmAllowFromWithStore } from "./bot-access.js";
-import type { TelegramMediaRef } from "./bot-message-context.js";
+import { isSenderAllowed, normalizeAllowFromWithStore } from "./bot-access.js";
 import {
   buildCappedTelegramMenuCommands,
   buildPluginTelegramMenuCommands,
@@ -93,7 +91,6 @@ export type RegisterTelegramHandlerParams = {
   opts: TelegramBotOptions;
   runtime: RuntimeEnv;
   telegramCfg: TelegramAccountConfig;
-  allowFrom?: Array<string | number>;
   groupAllowFrom?: Array<string | number>;
   resolveGroupPolicy: (chatId: string | number) => ChannelGroupPolicy;
   resolveTelegramGroupConfig: (
@@ -103,13 +100,12 @@ export type RegisterTelegramHandlerParams = {
   shouldSkipUpdate: (ctx: TelegramUpdateKeyContext) => boolean;
   processMessage: (
     ctx: TelegramContext,
-    allMedia: TelegramMediaRef[],
+    allMedia: Array<{ path: string; contentType?: string }>,
     storeAllowFrom: string[],
     options?: {
       messageIdOverride?: string;
       forceWasMentioned?: boolean;
     },
-    replyMedia?: TelegramMediaRef[],
   ) => Promise<void>;
   logger: ReturnType<typeof getChildLogger>;
 };
@@ -173,7 +169,7 @@ async function resolveTelegramCommandAuth(params: {
   const groupAllowContext = await resolveTelegramGroupAllowFromContext({
     chatId,
     accountId,
-    isGroup,
+    dmPolicy: telegramCfg.dmPolicy ?? "pairing",
     isForum,
     messageThreadId,
     groupAllowFrom,
@@ -181,26 +177,12 @@ async function resolveTelegramCommandAuth(params: {
   });
   const {
     resolvedThreadId,
-    dmThreadId,
     storeAllowFrom,
     groupConfig,
     topicConfig,
-    groupAllowOverride,
     effectiveGroupAllow,
     hasGroupAllowOverride,
   } = groupAllowContext;
-  // Use direct config dmPolicy override if available for DMs
-  const effectiveDmPolicy =
-    !isGroup && groupConfig && "dmPolicy" in groupConfig
-      ? (groupConfig.dmPolicy ?? telegramCfg.dmPolicy ?? "pairing")
-      : (telegramCfg.dmPolicy ?? "pairing");
-  const requireTopic = (groupConfig as TelegramDirectConfig | undefined)?.requireTopic;
-  if (!isGroup && requireTopic === true && dmThreadId == null) {
-    logVerbose(`Blocked telegram command in DM ${chatId}: requireTopic=true but no topic present`);
-    return null;
-  }
-  // For DMs, prefer per-DM/topic allowFrom (groupAllowOverride) over account-level allowFrom
-  const dmAllowFrom = groupAllowOverride ?? allowFrom;
   const senderId = msg.from?.id ? String(msg.from.id) : "";
   const senderUsername = msg.from?.username ?? "";
 
@@ -269,10 +251,10 @@ async function resolveTelegramCommandAuth(params: {
     }
   }
 
-  const dmAllow = normalizeDmAllowFromWithStore({
-    allowFrom: dmAllowFrom,
-    storeAllowFrom: isGroup ? [] : storeAllowFrom,
-    dmPolicy: effectiveDmPolicy,
+  const dmAllow = normalizeAllowFromWithStore({
+    allowFrom: allowFrom,
+    storeAllowFrom,
+    dmPolicy: telegramCfg.dmPolicy ?? "pairing",
   });
   const senderAllowed = isSenderAllowed({
     allow: dmAllow,
@@ -324,14 +306,10 @@ export const registerTelegramNativeCommands = ({
     nativeEnabled && nativeSkillsEnabled
       ? resolveAgentRoute({ cfg, channel: "telegram", accountId })
       : null;
-  if (nativeEnabled && nativeSkillsEnabled && !boundRoute) {
-    runtime.log?.(
-      "nativeSkillsEnabled is true but no agent route is bound for this Telegram account; skill commands will not appear in the native menu.",
-    );
-  }
+  const boundAgentIds = boundRoute ? [boundRoute.agentId] : null;
   const skillCommands =
-    nativeEnabled && nativeSkillsEnabled && boundRoute
-      ? listSkillCommandsForAgents({ cfg, agentIds: [boundRoute.agentId] })
+    nativeEnabled && nativeSkillsEnabled
+      ? listSkillCommandsForAgents(boundAgentIds ? { cfg, agentIds: boundAgentIds } : { cfg })
       : [];
   const nativeCommands = nativeEnabled
     ? listNativeCommandSpecsForConfig(cfg, {
@@ -401,13 +379,7 @@ export const registerTelegramNativeCommands = ({
   }
   // Telegram only limits the setMyCommands payload (menu entries).
   // Keep hidden commands callable by registering handlers for the full catalog.
-  syncTelegramMenuCommands({
-    bot,
-    runtime,
-    commandsToRegister,
-    accountId,
-    botIdentity: opts.token,
-  });
+  syncTelegramMenuCommands({ bot, runtime, commandsToRegister });
 
   const resolveCommandRuntimeContext = (params: {
     msg: NonNullable<TelegramNativeCommandContext["message"]>;
@@ -577,7 +549,7 @@ export const registerTelegramNativeCommands = ({
             dmThreadId != null
               ? resolveThreadSessionKeys({
                   baseSessionKey,
-                  threadId: `${chatId}:${dmThreadId}`,
+                  threadId: String(dmThreadId),
                 })
               : null;
           const sessionKey = threadKeys?.sessionKey ?? baseSessionKey;
@@ -601,7 +573,7 @@ export const registerTelegramNativeCommands = ({
             ChatType: isGroup ? "group" : "direct",
             ConversationLabel: conversationLabel,
             GroupSubject: isGroup ? (msg.chat.title ?? undefined) : undefined,
-            GroupSystemPrompt: isGroup || (!isGroup && groupConfig) ? groupSystemPrompt : undefined,
+            GroupSystemPrompt: isGroup ? groupSystemPrompt : undefined,
             SenderName: buildSenderName(msg),
             SenderId: senderId || undefined,
             SenderUsername: senderUsername || undefined,
@@ -622,16 +594,18 @@ export const registerTelegramNativeCommands = ({
             OriginatingTo: `telegram:${chatId}`,
           });
 
-          await recordInboundSessionMetaSafe({
-            cfg,
+          const storePath = resolveStorePath(cfg.session?.store, {
             agentId: route.agentId,
-            sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
-            ctx: ctxPayload,
-            onError: (err) =>
-              runtime.error?.(
-                danger(`telegram slash: failed updating session meta: ${String(err)}`),
-              ),
           });
+          try {
+            await recordSessionMetaFromInbound({
+              storePath,
+              sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
+              ctx: ctxPayload,
+            });
+          } catch (err) {
+            runtime.error?.(danger(`telegram slash: failed updating session meta: ${String(err)}`));
+          }
 
           const disableBlockStreaming =
             typeof telegramCfg.blockStreaming === "boolean"

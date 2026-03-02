@@ -3,7 +3,6 @@ import { listEnabledSignalAccounts, resolveSignalAccount } from "../../../signal
 import { resolveSignalReactionLevel } from "../../../signal/reaction-level.js";
 import { sendReactionSignal, removeReactionSignal } from "../../../signal/send-reactions.js";
 import type { ChannelMessageActionAdapter, ChannelMessageActionName } from "../types.js";
-import { resolveReactionMessageId } from "./reaction-message-id.js";
 
 const providerId = "signal";
 const GROUP_PREFIX = "group:";
@@ -91,7 +90,7 @@ export const signalMessageActions: ChannelMessageActionAdapter = {
   },
   supportsAction: ({ action }) => action !== "send",
 
-  handleAction: async ({ action, params, cfg, accountId, toolContext }) => {
+  handleAction: async ({ action, params, cfg, accountId }) => {
     if (action === "send") {
       throw new Error("Send should be handled by outbound, not actions handler.");
     }
@@ -127,13 +126,10 @@ export const signalMessageActions: ChannelMessageActionAdapter = {
         throw new Error("recipient or group required");
       }
 
-      const messageIdRaw = resolveReactionMessageId({ args: params, toolContext });
-      const messageId = messageIdRaw != null ? String(messageIdRaw) : undefined;
-      if (!messageId) {
-        throw new Error(
-          "messageId (timestamp) required. Provide messageId explicitly or react to the current inbound message.",
-        );
-      }
+      const messageId = readStringParam(params, "messageId", {
+        required: true,
+        label: "messageId (timestamp)",
+      });
       const targetAuthor = readStringParam(params, "targetAuthor");
       const targetAuthorUuid = readStringParam(params, "targetAuthorUuid");
       if (target.groupId && !targetAuthor && !targetAuthorUuid) {

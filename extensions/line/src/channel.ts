@@ -651,7 +651,7 @@ export const linePlugin: ChannelPlugin<ResolvedLineAccount> = {
 
       ctx.log?.info(`[${account.accountId}] starting LINE provider${lineBotLabel}`);
 
-      const monitor = await getLineRuntime().channel.line.monitorLineProvider({
+      return getLineRuntime().channel.line.monitorLineProvider({
         channelAccessToken: token,
         channelSecret: secret,
         accountId: account.accountId,
@@ -660,8 +660,6 @@ export const linePlugin: ChannelPlugin<ResolvedLineAccount> = {
         abortSignal: ctx.abortSignal,
         webhookPath: account.config.webhookPath,
       });
-
-      return monitor;
     },
     logoutAccount: async ({ accountId, cfg }) => {
       const envToken = process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim() ?? "";

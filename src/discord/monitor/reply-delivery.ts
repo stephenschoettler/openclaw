@@ -8,20 +8,7 @@ import { convertMarkdownTables } from "../../markdown/tables.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { chunkDiscordTextWithMode } from "../chunk.js";
 import { sendMessageDiscord, sendVoiceMessageDiscord, sendWebhookMessageDiscord } from "../send.js";
-
-export type DiscordThreadBindingLookupRecord = {
-  accountId: string;
-  threadId: string;
-  agentId: string;
-  label?: string;
-  webhookId?: string;
-  webhookToken?: string;
-};
-
-export type DiscordThreadBindingLookup = {
-  listBySessionKey: (targetSessionKey: string) => DiscordThreadBindingLookupRecord[];
-  touchThread?: (params: { threadId: string; at?: number; persist?: boolean }) => unknown;
-};
+import type { ThreadBindingManager, ThreadBindingRecord } from "./thread-bindings.js";
 
 function resolveTargetChannelId(target: string): string | undefined {
   if (!target.startsWith("channel:")) {
@@ -32,10 +19,10 @@ function resolveTargetChannelId(target: string): string | undefined {
 }
 
 function resolveBoundThreadBinding(params: {
-  threadBindings?: DiscordThreadBindingLookup;
+  threadBindings?: ThreadBindingManager;
   sessionKey?: string;
   target: string;
-}): DiscordThreadBindingLookupRecord | undefined {
+}): ThreadBindingRecord | undefined {
   const sessionKey = params.sessionKey?.trim();
   if (!params.threadBindings || !sessionKey) {
     return undefined;
@@ -51,7 +38,7 @@ function resolveBoundThreadBinding(params: {
   return bindings.find((entry) => entry.threadId === targetChannelId);
 }
 
-function resolveBindingPersona(binding: DiscordThreadBindingLookupRecord | undefined): {
+function resolveBindingPersona(binding: ThreadBindingRecord | undefined): {
   username?: string;
   avatarUrl?: string;
 } {
@@ -80,14 +67,14 @@ async function sendDiscordChunkWithFallback(params: {
   accountId?: string;
   rest?: RequestClient;
   replyTo?: string;
-  binding?: DiscordThreadBindingLookupRecord;
+  binding?: ThreadBindingRecord;
   username?: string;
   avatarUrl?: string;
 }) {
-  if (!params.text.trim()) {
+  const text = params.text.trim();
+  if (!text) {
     return;
   }
-  const text = params.text;
   const binding = params.binding;
   if (binding?.webhookId && binding?.webhookToken) {
     try {
@@ -147,7 +134,7 @@ export async function deliverDiscordReply(params: {
   tableMode?: MarkdownTableMode;
   chunkMode?: ChunkMode;
   sessionKey?: string;
-  threadBindings?: DiscordThreadBindingLookup;
+  threadBindings?: ThreadBindingManager;
 }) {
   const chunkLimit = Math.min(params.textLimit, 2000);
   const replyTo = params.replyToId?.trim() || undefined;
@@ -174,7 +161,6 @@ export async function deliverDiscordReply(params: {
     target: params.target,
   });
   const persona = resolveBindingPersona(binding);
-  let deliveredAny = false;
   for (const payload of params.replies) {
     const mediaList = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
     const rawText = payload.text ?? "";
@@ -209,7 +195,6 @@ export async function deliverDiscordReply(params: {
           username: persona.username,
           avatarUrl: persona.avatarUrl,
         });
-        deliveredAny = true;
       }
       continue;
     }
@@ -228,7 +213,6 @@ export async function deliverDiscordReply(params: {
         accountId: params.accountId,
         replyTo,
       });
-      deliveredAny = true;
       // Voice messages cannot include text; send remaining text separately if present.
       await sendDiscordChunkWithFallback({
         target: params.target,
@@ -261,7 +245,6 @@ export async function deliverDiscordReply(params: {
       accountId: params.accountId,
       replyTo,
     });
-    deliveredAny = true;
     await sendAdditionalDiscordMedia({
       target: params.target,
       token: params.token,
@@ -270,9 +253,5 @@ export async function deliverDiscordReply(params: {
       mediaUrls: mediaList.slice(1),
       resolveReplyTo,
     });
-  }
-
-  if (binding && deliveredAny) {
-    params.threadBindings?.touchThread?.({ threadId: binding.threadId });
   }
 }

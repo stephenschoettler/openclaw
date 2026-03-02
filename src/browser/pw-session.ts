@@ -9,7 +9,6 @@ import type {
 import { chromium } from "playwright-core";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
-import { withNoProxyForCdpUrl } from "./cdp-proxy-bypass.js";
 import { appendCdpPath, fetchJson, getHeadersWithAuth, withCdpSocket } from "./cdp.helpers.js";
 import { normalizeCdpWsUrl } from "./cdp.js";
 import { getChromeWebSocketUrl } from "./chrome.js";
@@ -337,10 +336,7 @@ async function connectBrowser(cdpUrl: string): Promise<ConnectedBrowser> {
         const wsUrl = await getChromeWebSocketUrl(normalized, timeout).catch(() => null);
         const endpoint = wsUrl ?? normalized;
         const headers = getHeadersWithAuth(endpoint);
-        // Bypass proxy for loopback CDP connections (#31219)
-        const browser = await withNoProxyForCdpUrl(endpoint, () =>
-          chromium.connectOverCDP(endpoint, { timeout, headers }),
-        );
+        const browser = await chromium.connectOverCDP(endpoint, { timeout, headers });
         const onDisconnected = () => {
           if (cached?.browser === browser) {
             cached = null;

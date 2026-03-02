@@ -14,7 +14,6 @@ import {
   sanitizeWithOpenAIResponses,
   TEST_SESSION_ID,
 } from "./pi-embedded-runner.sanitize-session-history.test-harness.js";
-import { makeZeroUsageSnapshot } from "./usage.js";
 
 vi.mock("./pi-embedded-helpers.js", async () => ({
   ...(await vi.importActual("./pi-embedded-helpers.js")),
@@ -73,54 +72,6 @@ describe("sanitizeSessionHistory", () => {
         ],
       },
     ] as unknown as AgentMessage[];
-
-  const makeUsage = (input: number, output: number, totalTokens: number) => ({
-    input,
-    output,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  });
-
-  const makeAssistantUsageMessage = (params: {
-    text: string;
-    usage: ReturnType<typeof makeUsage>;
-    timestamp?: number;
-  }) =>
-    ({
-      role: "assistant",
-      content: [{ type: "text", text: params.text }],
-      stopReason: "stop",
-      ...(typeof params.timestamp === "number" ? { timestamp: params.timestamp } : {}),
-      usage: params.usage,
-    }) as unknown as AgentMessage;
-
-  const makeCompactionSummaryMessage = (tokensBefore: number, timestamp: string) =>
-    ({
-      role: "compactionSummary",
-      summary: "compressed",
-      tokensBefore,
-      timestamp,
-    }) as unknown as AgentMessage;
-
-  const sanitizeOpenAIHistory = async (
-    messages: AgentMessage[],
-    overrides: Partial<Parameters<SanitizeSessionHistoryFn>[0]> = {},
-  ) =>
-    sanitizeSessionHistory({
-      messages,
-      modelApi: "openai-responses",
-      provider: "openai",
-      sessionManager: mockSessionManager,
-      sessionId: TEST_SESSION_ID,
-      ...overrides,
-    });
-
-  const getAssistantMessages = (messages: AgentMessage[]) =>
-    messages.filter((message) => message.role === "assistant") as Array<
-      AgentMessage & { usage?: unknown; content?: unknown }
-    >;
 
   beforeEach(async () => {
     sanitizeSessionHistory = await loadSanitizeSessionHistoryWithCleanMocks();
@@ -191,29 +142,6 @@ describe("sanitizeSessionHistory", () => {
     );
   });
 
-  it("sanitizes tool call ids for openai-completions", async () => {
-    setNonGoogleModelApi();
-
-    await sanitizeSessionHistory({
-      messages: mockMessages,
-      modelApi: "openai-completions",
-      provider: "openai",
-      modelId: "gpt-5.2",
-      sessionManager: mockSessionManager,
-      sessionId: TEST_SESSION_ID,
-    });
-
-    expect(helpers.sanitizeSessionMessagesImages).toHaveBeenCalledWith(
-      mockMessages,
-      "session:history",
-      expect.objectContaining({
-        sanitizeMode: "images-only",
-        sanitizeToolCallIds: true,
-        toolCallIdMode: "strict",
-      }),
-    );
-  });
-
   it("annotates inter-session user messages before context sanitization", async () => {
     setNonGoogleModelApi();
 
@@ -249,97 +177,95 @@ describe("sanitizeSessionHistory", () => {
 
     const messages = [
       { role: "user", content: "old context" },
-      makeAssistantUsageMessage({
-        text: "old answer",
-        usage: makeUsage(191_919, 2_000, 193_919),
-      }),
-      makeCompactionSummaryMessage(191_919, new Date().toISOString()),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "old answer" }],
+        stopReason: "stop",
+        usage: {
+          input: 191_919,
+          output: 2_000,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 193_919,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+      {
+        role: "compactionSummary",
+        summary: "compressed",
+        tokensBefore: 191_919,
+        timestamp: new Date().toISOString(),
+      },
     ] as unknown as AgentMessage[];
 
-    const result = await sanitizeOpenAIHistory(messages);
+    const result = await sanitizeSessionHistory({
+      messages,
+      modelApi: "openai-responses",
+      provider: "openai",
+      sessionManager: mockSessionManager,
+      sessionId: TEST_SESSION_ID,
+    });
 
     const staleAssistant = result.find((message) => message.role === "assistant") as
       | (AgentMessage & { usage?: unknown })
       | undefined;
     expect(staleAssistant).toBeDefined();
-    expect(staleAssistant?.usage).toEqual(makeZeroUsageSnapshot());
+    expect(staleAssistant?.usage).toBeUndefined();
   });
 
   it("preserves fresh assistant usage snapshots created after latest compaction summary", async () => {
     vi.mocked(helpers.isGoogleModelApi).mockReturnValue(false);
 
     const messages = [
-      makeAssistantUsageMessage({
-        text: "pre-compaction answer",
-        usage: makeUsage(120_000, 3_000, 123_000),
-      }),
-      makeCompactionSummaryMessage(123_000, new Date().toISOString()),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "pre-compaction answer" }],
+        stopReason: "stop",
+        usage: {
+          input: 120_000,
+          output: 3_000,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 123_000,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+      {
+        role: "compactionSummary",
+        summary: "compressed",
+        tokensBefore: 123_000,
+        timestamp: new Date().toISOString(),
+      },
       { role: "user", content: "new question" },
-      makeAssistantUsageMessage({
-        text: "fresh answer",
-        usage: makeUsage(1_000, 250, 1_250),
-      }),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "fresh answer" }],
+        stopReason: "stop",
+        usage: {
+          input: 1_000,
+          output: 250,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 1_250,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
     ] as unknown as AgentMessage[];
 
-    const result = await sanitizeOpenAIHistory(messages);
+    const result = await sanitizeSessionHistory({
+      messages,
+      modelApi: "openai-responses",
+      provider: "openai",
+      sessionManager: mockSessionManager,
+      sessionId: TEST_SESSION_ID,
+    });
 
-    const assistants = getAssistantMessages(result);
+    const assistants = result.filter((message) => message.role === "assistant") as Array<
+      AgentMessage & { usage?: unknown }
+    >;
     expect(assistants).toHaveLength(2);
-    expect(assistants[0]?.usage).toEqual(makeZeroUsageSnapshot());
+    expect(assistants[0]?.usage).toBeUndefined();
     expect(assistants[1]?.usage).toBeDefined();
-  });
-
-  it("drops stale usage when compaction summary appears before kept assistant messages", async () => {
-    vi.mocked(helpers.isGoogleModelApi).mockReturnValue(false);
-
-    const compactionTs = Date.parse("2026-02-26T12:00:00.000Z");
-    const messages = [
-      makeCompactionSummaryMessage(191_919, new Date(compactionTs).toISOString()),
-      makeAssistantUsageMessage({
-        text: "kept pre-compaction answer",
-        timestamp: compactionTs - 1_000,
-        usage: makeUsage(191_919, 2_000, 193_919),
-      }),
-    ] as unknown as AgentMessage[];
-
-    const result = await sanitizeOpenAIHistory(messages);
-
-    const assistant = result.find((message) => message.role === "assistant") as
-      | (AgentMessage & { usage?: unknown })
-      | undefined;
-    expect(assistant?.usage).toEqual(makeZeroUsageSnapshot());
-  });
-
-  it("keeps fresh usage after compaction timestamp in summary-first ordering", async () => {
-    vi.mocked(helpers.isGoogleModelApi).mockReturnValue(false);
-
-    const compactionTs = Date.parse("2026-02-26T12:00:00.000Z");
-    const messages = [
-      makeCompactionSummaryMessage(123_000, new Date(compactionTs).toISOString()),
-      makeAssistantUsageMessage({
-        text: "kept pre-compaction answer",
-        timestamp: compactionTs - 2_000,
-        usage: makeUsage(120_000, 3_000, 123_000),
-      }),
-      { role: "user", content: "new question", timestamp: compactionTs + 1_000 },
-      makeAssistantUsageMessage({
-        text: "fresh answer",
-        timestamp: compactionTs + 2_000,
-        usage: makeUsage(1_000, 250, 1_250),
-      }),
-    ] as unknown as AgentMessage[];
-
-    const result = await sanitizeOpenAIHistory(messages);
-
-    const assistants = getAssistantMessages(result);
-    const keptAssistant = assistants.find((message) =>
-      JSON.stringify(message.content).includes("kept pre-compaction answer"),
-    );
-    const freshAssistant = assistants.find((message) =>
-      JSON.stringify(message.content).includes("fresh answer"),
-    );
-    expect(keptAssistant?.usage).toEqual(makeZeroUsageSnapshot());
-    expect(freshAssistant?.usage).toBeDefined();
   });
 
   it("keeps reasoning-only assistant messages for openai-responses", async () => {
@@ -380,7 +306,13 @@ describe("sanitizeSessionHistory", () => {
       },
     ] as unknown as AgentMessage[];
 
-    const result = await sanitizeOpenAIHistory(messages);
+    const result = await sanitizeSessionHistory({
+      messages,
+      modelApi: "openai-responses",
+      provider: "openai",
+      sessionManager: mockSessionManager,
+      sessionId: TEST_SESSION_ID,
+    });
 
     // repairToolUseResultPairing now runs for all providers (including OpenAI)
     // to fix orphaned function_call_output items that OpenAI would reject.
@@ -398,7 +330,13 @@ describe("sanitizeSessionHistory", () => {
       { role: "user", content: "hello" },
     ] as unknown as AgentMessage[];
 
-    const result = await sanitizeOpenAIHistory(messages, { sessionId: "test-session" });
+    const result = await sanitizeSessionHistory({
+      messages,
+      modelApi: "openai-responses",
+      provider: "openai",
+      sessionManager: mockSessionManager,
+      sessionId: "test-session",
+    });
 
     expect(result.map((msg) => msg.role)).toEqual(["user"]);
   });
@@ -420,7 +358,13 @@ describe("sanitizeSessionHistory", () => {
       { role: "user", content: "hello" },
     ] as unknown as AgentMessage[];
 
-    const result = await sanitizeOpenAIHistory(messages);
+    const result = await sanitizeSessionHistory({
+      messages,
+      modelApi: "openai-responses",
+      provider: "openai",
+      sessionManager: mockSessionManager,
+      sessionId: TEST_SESSION_ID,
+    });
 
     expect(result.map((msg) => msg.role)).toEqual(["user"]);
   });
@@ -433,8 +377,13 @@ describe("sanitizeSessionHistory", () => {
       },
     ] as unknown as AgentMessage[];
 
-    const result = await sanitizeOpenAIHistory(messages, {
+    const result = await sanitizeSessionHistory({
+      messages,
+      modelApi: "openai-responses",
+      provider: "openai",
       allowedToolNames: ["read"],
+      sessionManager: mockSessionManager,
+      sessionId: TEST_SESSION_ID,
     });
 
     expect(result).toEqual([]);

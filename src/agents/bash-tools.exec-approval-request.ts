@@ -1,4 +1,4 @@
-import type { ExecAsk, ExecSecurity, SystemRunApprovalPlan } from "../infra/exec-approvals.js";
+import type { ExecAsk, ExecSecurity } from "../infra/exec-approvals.js";
 import {
   DEFAULT_APPROVAL_REQUEST_TIMEOUT_MS,
   DEFAULT_APPROVAL_TIMEOUT_MS,
@@ -8,9 +8,6 @@ import { callGatewayTool } from "./tools/gateway.js";
 export type RequestExecApprovalDecisionParams = {
   id: string;
   command: string;
-  commandArgv?: string[];
-  systemRunPlan?: SystemRunApprovalPlan;
-  env?: Record<string, string>;
   cwd: string;
   nodeId?: string;
   host: "gateway" | "node";
@@ -19,42 +16,7 @@ export type RequestExecApprovalDecisionParams = {
   agentId?: string;
   resolvedPath?: string;
   sessionKey?: string;
-  turnSourceChannel?: string;
-  turnSourceTo?: string;
-  turnSourceAccountId?: string;
-  turnSourceThreadId?: string | number;
 };
-
-type ExecApprovalRequestToolParams = RequestExecApprovalDecisionParams & {
-  timeoutMs: number;
-  twoPhase: true;
-};
-
-function buildExecApprovalRequestToolParams(
-  params: RequestExecApprovalDecisionParams,
-): ExecApprovalRequestToolParams {
-  return {
-    id: params.id,
-    command: params.command,
-    commandArgv: params.commandArgv,
-    systemRunPlan: params.systemRunPlan,
-    env: params.env,
-    cwd: params.cwd,
-    nodeId: params.nodeId,
-    host: params.host,
-    security: params.security,
-    ask: params.ask,
-    agentId: params.agentId,
-    resolvedPath: params.resolvedPath,
-    sessionKey: params.sessionKey,
-    turnSourceChannel: params.turnSourceChannel,
-    turnSourceTo: params.turnSourceTo,
-    turnSourceAccountId: params.turnSourceAccountId,
-    turnSourceThreadId: params.turnSourceThreadId,
-    timeoutMs: DEFAULT_APPROVAL_TIMEOUT_MS,
-    twoPhase: true,
-  };
-}
 
 type ParsedDecision = { present: boolean; value: string | null };
 
@@ -97,7 +59,20 @@ export async function registerExecApprovalRequest(
   }>(
     "exec.approval.request",
     { timeoutMs: DEFAULT_APPROVAL_REQUEST_TIMEOUT_MS },
-    buildExecApprovalRequestToolParams(params),
+    {
+      id: params.id,
+      command: params.command,
+      cwd: params.cwd,
+      nodeId: params.nodeId,
+      host: params.host,
+      security: params.security,
+      ask: params.ask,
+      agentId: params.agentId,
+      resolvedPath: params.resolvedPath,
+      sessionKey: params.sessionKey,
+      timeoutMs: DEFAULT_APPROVAL_TIMEOUT_MS,
+      twoPhase: true,
+    },
     { expectFinal: false },
   );
   const decision = parseDecision(registrationResult);
@@ -128,16 +103,6 @@ export async function waitForExecApprovalDecision(id: string): Promise<string | 
   }
 }
 
-export async function resolveRegisteredExecApprovalDecision(params: {
-  approvalId: string;
-  preResolvedDecision: string | null | undefined;
-}): Promise<string | null> {
-  if (params.preResolvedDecision !== undefined) {
-    return params.preResolvedDecision ?? null;
-  }
-  return await waitForExecApprovalDecision(params.approvalId);
-}
-
 export async function requestExecApprovalDecision(
   params: RequestExecApprovalDecisionParams,
 ): Promise<string | null> {
@@ -148,12 +113,9 @@ export async function requestExecApprovalDecision(
   return await waitForExecApprovalDecision(registration.id);
 }
 
-type HostExecApprovalParams = {
+export async function requestExecApprovalDecisionForHost(params: {
   approvalId: string;
   command: string;
-  commandArgv?: string[];
-  systemRunPlan?: SystemRunApprovalPlan;
-  env?: Record<string, string>;
   workdir: string;
   host: "gateway" | "node";
   nodeId?: string;
@@ -162,86 +124,43 @@ type HostExecApprovalParams = {
   agentId?: string;
   resolvedPath?: string;
   sessionKey?: string;
-  turnSourceChannel?: string;
-  turnSourceTo?: string;
-  turnSourceAccountId?: string;
-  turnSourceThreadId?: string | number;
-};
-
-type ExecApprovalRequesterContext = {
-  agentId?: string;
-  sessionKey?: string;
-};
-
-export function buildExecApprovalRequesterContext(params: ExecApprovalRequesterContext): {
-  agentId?: string;
-  sessionKey?: string;
-} {
-  return {
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-  };
-}
-
-type ExecApprovalTurnSourceContext = {
-  turnSourceChannel?: string;
-  turnSourceTo?: string;
-  turnSourceAccountId?: string;
-  turnSourceThreadId?: string | number;
-};
-
-export function buildExecApprovalTurnSourceContext(
-  params: ExecApprovalTurnSourceContext,
-): ExecApprovalTurnSourceContext {
-  return {
-    turnSourceChannel: params.turnSourceChannel,
-    turnSourceTo: params.turnSourceTo,
-    turnSourceAccountId: params.turnSourceAccountId,
-    turnSourceThreadId: params.turnSourceThreadId,
-  };
-}
-
-function buildHostApprovalDecisionParams(
-  params: HostExecApprovalParams,
-): RequestExecApprovalDecisionParams {
-  return {
+}): Promise<string | null> {
+  return await requestExecApprovalDecision({
     id: params.approvalId,
     command: params.command,
-    commandArgv: params.commandArgv,
-    systemRunPlan: params.systemRunPlan,
-    env: params.env,
     cwd: params.workdir,
     nodeId: params.nodeId,
     host: params.host,
     security: params.security,
     ask: params.ask,
-    ...buildExecApprovalRequesterContext({
-      agentId: params.agentId,
-      sessionKey: params.sessionKey,
-    }),
+    agentId: params.agentId,
     resolvedPath: params.resolvedPath,
-    ...buildExecApprovalTurnSourceContext(params),
-  };
+    sessionKey: params.sessionKey,
+  });
 }
 
-export async function requestExecApprovalDecisionForHost(
-  params: HostExecApprovalParams,
-): Promise<string | null> {
-  return await requestExecApprovalDecision(buildHostApprovalDecisionParams(params));
-}
-
-export async function registerExecApprovalRequestForHost(
-  params: HostExecApprovalParams,
-): Promise<ExecApprovalRegistration> {
-  return await registerExecApprovalRequest(buildHostApprovalDecisionParams(params));
-}
-
-export async function registerExecApprovalRequestForHostOrThrow(
-  params: HostExecApprovalParams,
-): Promise<ExecApprovalRegistration> {
-  try {
-    return await registerExecApprovalRequestForHost(params);
-  } catch (err) {
-    throw new Error(`Exec approval registration failed: ${String(err)}`, { cause: err });
-  }
+export async function registerExecApprovalRequestForHost(params: {
+  approvalId: string;
+  command: string;
+  workdir: string;
+  host: "gateway" | "node";
+  nodeId?: string;
+  security: ExecSecurity;
+  ask: ExecAsk;
+  agentId?: string;
+  resolvedPath?: string;
+  sessionKey?: string;
+}): Promise<ExecApprovalRegistration> {
+  return await registerExecApprovalRequest({
+    id: params.approvalId,
+    command: params.command,
+    cwd: params.workdir,
+    nodeId: params.nodeId,
+    host: params.host,
+    security: params.security,
+    ask: params.ask,
+    agentId: params.agentId,
+    resolvedPath: params.resolvedPath,
+    sessionKey: params.sessionKey,
+  });
 }

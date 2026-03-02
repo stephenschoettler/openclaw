@@ -1,9 +1,5 @@
 import type { OpenClawConfig } from "../../config/config.js";
-import {
-  findNormalizedProviderValue,
-  normalizeProviderId,
-  normalizeProviderIdForAuth,
-} from "../model-selection.js";
+import { findNormalizedProviderValue, normalizeProviderId } from "../model-selection.js";
 import { dedupeProfileIds, listProfilesForProvider } from "./profiles.js";
 import type { AuthProfileStore } from "./types.js";
 import {
@@ -20,7 +16,6 @@ export function resolveAuthProfileOrder(params: {
 }): string[] {
   const { cfg, store, provider, preferredProfile } = params;
   const providerKey = normalizeProviderId(provider);
-  const providerAuthKey = normalizeProviderIdForAuth(provider);
   const now = Date.now();
 
   // Clear any cooldowns that have expired since the last check so profiles
@@ -32,12 +27,12 @@ export function resolveAuthProfileOrder(params: {
   const explicitOrder = storedOrder ?? configuredOrder;
   const explicitProfiles = cfg?.auth?.profiles
     ? Object.entries(cfg.auth.profiles)
-        .filter(([, profile]) => normalizeProviderIdForAuth(profile.provider) === providerAuthKey)
+        .filter(([, profile]) => normalizeProviderId(profile.provider) === providerKey)
         .map(([profileId]) => profileId)
     : [];
   const baseOrder =
     explicitOrder ??
-    (explicitProfiles.length > 0 ? explicitProfiles : listProfilesForProvider(store, provider));
+    (explicitProfiles.length > 0 ? explicitProfiles : listProfilesForProvider(store, providerKey));
   if (baseOrder.length === 0) {
     return [];
   }
@@ -47,12 +42,12 @@ export function resolveAuthProfileOrder(params: {
     if (!cred) {
       return false;
     }
-    if (normalizeProviderIdForAuth(cred.provider) !== providerAuthKey) {
+    if (normalizeProviderId(cred.provider) !== providerKey) {
       return false;
     }
     const profileConfig = cfg?.auth?.profiles?.[profileId];
     if (profileConfig) {
-      if (normalizeProviderIdForAuth(profileConfig.provider) !== providerAuthKey) {
+      if (normalizeProviderId(profileConfig.provider) !== providerKey) {
         return false;
       }
       if (profileConfig.mode !== cred.type) {
@@ -91,7 +86,7 @@ export function resolveAuthProfileOrder(params: {
   // provider's stored credentials and use any valid entries.
   const allBaseProfilesMissing = baseOrder.every((profileId) => !store.profiles[profileId]);
   if (filtered.length === 0 && explicitProfiles.length > 0 && allBaseProfilesMissing) {
-    const storeProfiles = listProfilesForProvider(store, provider);
+    const storeProfiles = listProfilesForProvider(store, providerKey);
     filtered = storeProfiles.filter(isValidProfile);
   }
 
@@ -107,9 +102,13 @@ export function resolveAuthProfileOrder(params: {
     const inCooldown: Array<{ profileId: string; cooldownUntil: number }> = [];
 
     for (const profileId of deduped) {
-      if (isProfileInCooldown(store, profileId)) {
-        const cooldownUntil =
-          resolveProfileUnusableUntil(store.usageStats?.[profileId] ?? {}) ?? now;
+      const cooldownUntil = resolveProfileUnusableUntil(store.usageStats?.[profileId] ?? {}) ?? 0;
+      if (
+        typeof cooldownUntil === "number" &&
+        Number.isFinite(cooldownUntil) &&
+        cooldownUntil > 0 &&
+        now < cooldownUntil
+      ) {
         inCooldown.push({ profileId, cooldownUntil });
       } else {
         available.push(profileId);

@@ -94,7 +94,6 @@ export function resolveGatewayCredentialsFromConfig(params: {
   env?: NodeJS.ProcessEnv;
   explicitAuth?: ExplicitGatewayAuth;
   urlOverride?: string;
-  urlOverrideSource?: "cli" | "env";
   modeOverride?: GatewayCredentialMode;
   includeLegacyEnv?: boolean;
   localTokenPrecedence?: GatewayCredentialPrecedence;
@@ -111,23 +110,13 @@ export function resolveGatewayCredentialsFromConfig(params: {
   if (explicitToken || explicitPassword) {
     return { token: explicitToken, password: explicitPassword };
   }
-  if (trimToUndefined(params.urlOverride) && params.urlOverrideSource !== "env") {
+  if (trimToUndefined(params.urlOverride)) {
     return {};
-  }
-  if (trimToUndefined(params.urlOverride) && params.urlOverrideSource === "env") {
-    return resolveGatewayCredentialsFromValues({
-      configToken: undefined,
-      configPassword: undefined,
-      env,
-      includeLegacyEnv,
-      tokenPrecedence: "env-first",
-      passwordPrecedence: "env-first",
-    });
   }
 
   const mode: GatewayCredentialMode =
     params.modeOverride ?? (params.cfg.gateway?.mode === "remote" ? "remote" : "local");
-  const remote = params.cfg.gateway?.remote;
+  const remote = mode === "remote" ? params.cfg.gateway?.remote : undefined;
   const envToken = readGatewayTokenEnv(env, includeLegacyEnv);
   const envPassword = readGatewayPasswordEnv(env, includeLegacyEnv);
 
@@ -140,14 +129,9 @@ export function resolveGatewayCredentialsFromConfig(params: {
   const localPasswordPrecedence = params.localPasswordPrecedence ?? "env-first";
 
   if (mode === "local") {
-    // In local mode, prefer gateway.auth.token, but also accept gateway.remote.token
-    // as a fallback for cron commands and other local gateway clients.
-    // This allows users in remote mode to use a single token for all operations.
-    const fallbackToken = localToken ?? remoteToken;
-    const fallbackPassword = localPassword ?? remotePassword;
     const localResolved = resolveGatewayCredentialsFromValues({
-      configToken: fallbackToken,
-      configPassword: fallbackPassword,
+      configToken: localToken,
+      configPassword: localPassword,
       env,
       includeLegacyEnv,
       tokenPrecedence: localTokenPrecedence,

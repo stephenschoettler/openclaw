@@ -23,11 +23,6 @@ let didRunDoctorConfigFlow = false;
 let configSnapshotPromise: Promise<Awaited<ReturnType<typeof readConfigFileSnapshot>>> | null =
   null;
 
-function resetConfigGuardStateForTests() {
-  didRunDoctorConfigFlow = false;
-  configSnapshotPromise = null;
-}
-
 function formatConfigIssues(issues: Array<{ path: string; message: string }>): string[] {
   return issues.map((issue) => `- ${issue.path || "<root>"}: ${issue.message}`);
 }
@@ -44,34 +39,14 @@ async function getConfigSnapshot() {
 export async function ensureConfigReady(params: {
   runtime: RuntimeEnv;
   commandPath?: string[];
-  suppressDoctorStdout?: boolean;
 }): Promise<void> {
   const commandPath = params.commandPath ?? [];
   if (!didRunDoctorConfigFlow && shouldMigrateStateFromPath(commandPath)) {
     didRunDoctorConfigFlow = true;
-    const runDoctorConfigFlow = async () =>
-      loadAndMaybeMigrateDoctorConfig({
-        options: { nonInteractive: true },
-        confirm: async () => false,
-      });
-    if (!params.suppressDoctorStdout) {
-      await runDoctorConfigFlow();
-    } else {
-      const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-      const originalSuppressNotes = process.env.OPENCLAW_SUPPRESS_NOTES;
-      process.stdout.write = (() => true) as unknown as typeof process.stdout.write;
-      process.env.OPENCLAW_SUPPRESS_NOTES = "1";
-      try {
-        await runDoctorConfigFlow();
-      } finally {
-        process.stdout.write = originalStdoutWrite;
-        if (originalSuppressNotes === undefined) {
-          delete process.env.OPENCLAW_SUPPRESS_NOTES;
-        } else {
-          process.env.OPENCLAW_SUPPRESS_NOTES = originalSuppressNotes;
-        }
-      }
-    }
+    await loadAndMaybeMigrateDoctorConfig({
+      options: { nonInteractive: true },
+      confirm: async () => false,
+    });
   }
 
   const snapshot = await getConfigSnapshot();
@@ -118,7 +93,3 @@ export async function ensureConfigReady(params: {
     params.runtime.exit(1);
   }
 }
-
-export const __test__ = {
-  resetConfigGuardStateForTests,
-};

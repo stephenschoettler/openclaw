@@ -147,32 +147,6 @@ describe("update-startup", () => {
     });
   }
 
-  function createBetaAutoUpdateConfig(params?: { checkOnStart?: boolean }) {
-    return {
-      update: {
-        ...(params?.checkOnStart === false ? { checkOnStart: false } : {}),
-        channel: "beta" as const,
-        auto: {
-          enabled: true,
-          betaCheckIntervalHours: 1,
-        },
-      },
-    };
-  }
-
-  async function runAutoUpdateCheckWithDefaults(params: {
-    cfg: { update?: Record<string, unknown> };
-    runAutoUpdate?: ReturnType<typeof createAutoUpdateSuccessMock>;
-  }) {
-    await runGatewayUpdateCheck({
-      cfg: params.cfg,
-      log: { info: vi.fn() },
-      isNixMode: false,
-      allowInTests: true,
-      ...(params.runAutoUpdate ? { runAutoUpdate: params.runAutoUpdate } : {}),
-    });
-  }
-
   it.each([
     {
       name: "stable channel",
@@ -336,8 +310,19 @@ describe("update-startup", () => {
     mockPackageUpdateStatus("beta", "2.0.0-beta.1");
     const runAutoUpdate = createAutoUpdateSuccessMock();
 
-    await runAutoUpdateCheckWithDefaults({
-      cfg: createBetaAutoUpdateConfig(),
+    await runGatewayUpdateCheck({
+      cfg: {
+        update: {
+          channel: "beta",
+          auto: {
+            enabled: true,
+            betaCheckIntervalHours: 1,
+          },
+        },
+      },
+      log: { info: vi.fn() },
+      isNixMode: false,
+      allowInTests: true,
       runAutoUpdate,
     });
 
@@ -353,8 +338,20 @@ describe("update-startup", () => {
     mockPackageUpdateStatus("beta", "2.0.0-beta.1");
     const runAutoUpdate = createAutoUpdateSuccessMock();
 
-    await runAutoUpdateCheckWithDefaults({
-      cfg: createBetaAutoUpdateConfig({ checkOnStart: false }),
+    await runGatewayUpdateCheck({
+      cfg: {
+        update: {
+          checkOnStart: false,
+          channel: "beta",
+          auto: {
+            enabled: true,
+            betaCheckIntervalHours: 1,
+          },
+        },
+      },
+      log: { info: vi.fn() },
+      isNixMode: false,
+      allowInTests: true,
       runAutoUpdate,
     });
 
@@ -384,8 +381,19 @@ describe("update-startup", () => {
     const originalArgv = process.argv.slice();
     process.argv = [process.execPath, "/opt/openclaw/dist/entry.js"];
     try {
-      await runAutoUpdateCheckWithDefaults({
-        cfg: createBetaAutoUpdateConfig(),
+      await runGatewayUpdateCheck({
+        cfg: {
+          update: {
+            channel: "beta",
+            auto: {
+              enabled: true,
+              betaCheckIntervalHours: 1,
+            },
+          },
+        },
+        log: { info: vi.fn() },
+        isNixMode: false,
+        allowInTests: true,
       });
     } finally {
       process.argv = originalArgv;

@@ -8,7 +8,6 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    ENABLE_APP_INTENTS_METADATA_GENERATION: NO
 
 packages:
   OpenClawKit:
@@ -81,11 +80,9 @@ targets:
         DEVELOPMENT_TEAM: "$(OPENCLAW_DEVELOPMENT_TEAM)"
         PRODUCT_BUNDLE_IDENTIFIER: "$(OPENCLAW_APP_BUNDLE_ID)"
         PROVISIONING_PROFILE_SPECIFIER: "$(OPENCLAW_APP_PROFILE)"
-        TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         ENABLE_APPINTENTS_METADATA: NO
-        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
     info:
       path: Sources/Info.plist
       properties:
@@ -95,8 +92,8 @@ targets:
           - CFBundleURLName: ai.openclaw.ios
             CFBundleURLSchemes:
               - openclaw
-        CFBundleShortVersionString: "2026.3.2"
-        CFBundleVersion: "20260301"
+        CFBundleShortVersionString: "2026.2.23"
+        CFBundleVersion: "20260223"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -136,14 +133,11 @@ targets:
       - path: ShareExtension
     dependencies:
       - package: OpenClawKit
-      - sdk: AppIntents.framework
     settings:
       base:
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: "$(OPENCLAW_CODE_SIGN_STYLE)"
         DEVELOPMENT_TEAM: "$(OPENCLAW_DEVELOPMENT_TEAM)"
-        ENABLE_APPINTENTS_METADATA: NO
-        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
         PRODUCT_BUNDLE_IDENTIFIER: "$(OPENCLAW_SHARE_BUNDLE_ID)"
         PROVISIONING_PROFILE_SPECIFIER: "$(OPENCLAW_SHARE_PROFILE)"
         SWIFT_VERSION: "6.0"
@@ -152,8 +146,8 @@ targets:
       path: ShareExtension/Info.plist
       properties:
         CFBundleDisplayName: OpenClaw Share
-        CFBundleShortVersionString: "2026.3.2"
-        CFBundleVersion: "20260301"
+        CFBundleShortVersionString: "2026.2.23"
+        CFBundleVersion: "20260223"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
@@ -177,15 +171,13 @@ targets:
       Release: Config/Signing.xcconfig
     settings:
       base:
-        ENABLE_APPINTENTS_METADATA: NO
-        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
         PRODUCT_BUNDLE_IDENTIFIER: "$(OPENCLAW_WATCH_APP_BUNDLE_ID)"
     info:
       path: WatchApp/Info.plist
       properties:
         CFBundleDisplayName: OpenClaw
-        CFBundleShortVersionString: "2026.3.2"
-        CFBundleVersion: "20260301"
+        CFBundleShortVersionString: "2026.2.23"
+        CFBundleVersion: "20260223"
         WKCompanionAppBundleIdentifier: "$(OPENCLAW_APP_BUNDLE_ID)"
         WKWatchKitApp: true
 
@@ -196,7 +188,6 @@ targets:
     sources:
       - path: WatchExtension/Sources
     dependencies:
-      - sdk: AppIntents.framework
       - sdk: WatchConnectivity.framework
       - sdk: UserNotifications.framework
     configFiles:
@@ -209,8 +200,8 @@ targets:
       path: WatchExtension/Info.plist
       properties:
         CFBundleDisplayName: OpenClaw
-        CFBundleShortVersionString: "2026.3.2"
-        CFBundleVersion: "20260301"
+        CFBundleShortVersionString: "2026.2.23"
+        CFBundleVersion: "20260223"
         NSExtension:
           NSExtensionAttributes:
             WKAppBundleIdentifier: "$(OPENCLAW_WATCH_APP_BUNDLE_ID)"
@@ -219,9 +210,6 @@ targets:
   OpenClawTests:
     type: bundle.unit-test
     platform: iOS
-    configFiles:
-      Debug: Signing.xcconfig
-      Release: Signing.xcconfig
     sources:
       - path: Tests
     dependencies:
@@ -231,11 +219,7 @@ targets:
       - sdk: AppIntents.framework
     settings:
       base:
-        CODE_SIGN_IDENTITY: "Apple Development"
-        CODE_SIGN_STYLE: "$(OPENCLAW_CODE_SIGN_STYLE)"
-        DEVELOPMENT_TEAM: "$(OPENCLAW_DEVELOPMENT_TEAM)"
         PRODUCT_BUNDLE_IDENTIFIER: ai.openclaw.ios.tests
-        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/OpenClaw.app/OpenClaw"
@@ -244,5 +228,5 @@ targets:
       path: Tests/Info.plist
       properties:
         CFBundleDisplayName: OpenClawTests
-        CFBundleShortVersionString: "2026.3.2"
-        CFBundleVersion: "20260301"
+        CFBundleShortVersionString: "2026.2.23"
+        CFBundleVersion: "20260223"

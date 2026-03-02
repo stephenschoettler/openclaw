@@ -376,12 +376,6 @@ Example:
 
     If DM policy is not open, unknown users are blocked (or prompted for pairing in `pairing` mode).
 
-    Multi-account precedence:
-
-    - `channels.discord.accounts.default.allowFrom` applies only to the `default` account.
-    - Named accounts inherit `channels.discord.allowFrom` when their own `allowFrom` is unset.
-    - Named accounts do not inherit `channels.discord.accounts.default.allowFrom`.
-
     DM target format for delivery:
 
     - `user:<id>`
@@ -642,8 +636,7 @@ Default slash command settings:
     - `/focus <target>` bind current/new thread to a subagent/session target
     - `/unfocus` remove current thread binding
     - `/agents` show active runs and binding state
-    - `/session idle <duration|off>` inspect/update inactivity auto-unfocus for focused bindings
-    - `/session max-age <duration|off>` inspect/update hard max age for focused bindings
+    - `/session ttl <duration|off>` inspect/update auto-unfocus TTL for focused bindings
 
     Config:
 
@@ -652,16 +645,14 @@ Default slash command settings:
   session: {
     threadBindings: {
       enabled: true,
-      idleHours: 24,
-      maxAgeHours: 0,
+      ttlHours: 24,
     },
   },
   channels: {
     discord: {
       threadBindings: {
         enabled: true,
-        idleHours: 24,
-        maxAgeHours: 0,
+        ttlHours: 24,
         spawnSubagentSessions: false, // opt-in
       },
     },
@@ -674,10 +665,9 @@ Default slash command settings:
     - `session.threadBindings.*` sets global defaults.
     - `channels.discord.threadBindings.*` overrides Discord behavior.
     - `spawnSubagentSessions` must be true to auto-create/bind threads for `sessions_spawn({ thread: true })`.
-    - `spawnAcpSessions` must be true to auto-create/bind threads for ACP (`/acp spawn ... --thread ...` or `sessions_spawn({ runtime: "acp", thread: true })`).
     - If thread bindings are disabled for an account, `/focus` and related thread binding operations are unavailable.
 
-    See [Sub-agents](/tools/subagents), [ACP Agents](/tools/acp-agents), and [Configuration Reference](/gateway/configuration-reference).
+    See [Sub-agents](/tools/subagents) and [Configuration Reference](/gateway/configuration-reference).
 
   </Accordion>
 
@@ -929,8 +919,6 @@ Auto-join example:
             channelId: "234567890123456789",
           },
         ],
-        daveEncryption: true,
-        decryptionFailureTolerance: 24,
         tts: {
           provider: "openai",
           openai: { voice: "alloy" },
@@ -945,10 +933,6 @@ Notes:
 
 - `voice.tts` overrides `messages.tts` for voice playback only.
 - Voice is enabled by default; set `channels.discord.voice.enabled=false` to disable it.
-- `voice.daveEncryption` and `voice.decryptionFailureTolerance` pass through to `@discordjs/voice` join options.
-- `@discordjs/voice` defaults are `daveEncryption=true` and `decryptionFailureTolerance=24` if unset.
-- OpenClaw also watches receive decrypt failures and auto-recovers by leaving/rejoining the voice channel after repeated failures in a short window.
-- If receive logs repeatedly show `DecryptionFailed(UnencryptedWhenPassthroughDisabled)`, this may be the upstream `@discordjs/voice` receive bug tracked in [discord.js #11419](https://github.com/discordjs/discord.js/issues/11419).
 
 ## Voice messages
 
@@ -1003,40 +987,6 @@ openclaw logs --follow
 
   </Accordion>
 
-  <Accordion title="Long-running handlers time out or duplicate replies">
-
-    Typical logs:
-
-    - `Listener DiscordMessageListener timed out after 30000ms for event MESSAGE_CREATE`
-    - `Slow listener detected ...`
-
-    Canonical knob:
-
-    - single-account: `channels.discord.eventQueue.listenerTimeout`
-    - multi-account: `channels.discord.accounts.<accountId>.eventQueue.listenerTimeout`
-
-    Recommended baseline:
-
-```json5
-{
-  channels: {
-    discord: {
-      accounts: {
-        default: {
-          eventQueue: {
-            listenerTimeout: 120000,
-          },
-        },
-      },
-    },
-  },
-}
-```
-
-    Tune this first before adding alternate timeout controls elsewhere.
-
-  </Accordion>
-
   <Accordion title="Permissions audit mismatches">
     `channels status --probe` permission checks only work for numeric channel IDs.
 
@@ -1058,18 +1008,6 @@ openclaw logs --follow
     If you set `channels.discord.allowBots=true`, use strict mention and allowlist rules to avoid loop behavior.
 
   </Accordion>
-
-  <Accordion title="Voice STT drops with DecryptionFailed(...)">
-
-    - keep OpenClaw current (`openclaw update`) so the Discord voice receive recovery logic is present
-    - confirm `channels.discord.voice.daveEncryption=true` (default)
-    - start from `channels.discord.voice.decryptionFailureTolerance=24` (upstream default) and tune only if needed
-    - watch logs for:
-      - `discord voice: DAVE decrypt failures detected`
-      - `discord voice: repeated decrypt failures; attempting rejoin`
-    - if failures continue after automatic rejoin, collect logs and compare against [discord.js #11419](https://github.com/discordjs/discord.js/issues/11419)
-
-  </Accordion>
 </AccordionGroup>
 
 ## Configuration reference pointers
@@ -1083,7 +1021,6 @@ High-signal Discord fields:
 - startup/auth: `enabled`, `token`, `accounts.*`, `allowBots`
 - policy: `groupPolicy`, `dm.*`, `guilds.*`, `guilds.*.channels.*`
 - command: `commands.native`, `commands.useAccessGroups`, `configWrites`, `slashCommand.*`
-- event queue: `eventQueue.listenerTimeout` (canonical), `eventQueue.maxQueueSize`, `eventQueue.maxConcurrency`
 - reply/history: `replyToMode`, `historyLimit`, `dmHistoryLimit`, `dms.*.historyLimit`
 - delivery: `textChunkLimit`, `chunkMode`, `maxLinesPerMessage`
 - streaming: `streaming` (legacy alias: `streamMode`), `draftChunk`, `blockStreaming`, `blockStreamingCoalesce`

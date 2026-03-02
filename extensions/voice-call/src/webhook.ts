@@ -15,7 +15,6 @@ import type { VoiceCallProvider } from "./providers/base.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import type { TwilioProvider } from "./providers/twilio.js";
 import type { NormalizedEvent, WebhookContext } from "./types.js";
-import { startStaleCallReaper } from "./webhook/stale-call-reaper.js";
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -29,7 +28,7 @@ export class VoiceCallWebhookServer {
   private manager: CallManager;
   private provider: VoiceCallProvider;
   private coreConfig: CoreConfig | null;
-  private stopStaleCallReaper: (() => void) | null = null;
+  private staleCallReaperInterval: ReturnType<typeof setInterval> | null = null;
 
   /** Media stream handler for bidirectional audio (when streaming enabled) */
   private mediaStreamHandler: MediaStreamHandler | null = null;
@@ -218,21 +217,48 @@ export class VoiceCallWebhookServer {
         resolve(url);
 
         // Start the stale call reaper if configured
-        this.stopStaleCallReaper = startStaleCallReaper({
-          manager: this.manager,
-          staleCallReaperSeconds: this.config.staleCallReaperSeconds,
-        });
+        this.startStaleCallReaper();
       });
     });
+  }
+
+  /**
+   * Start a periodic reaper that ends calls older than the configured threshold.
+   * Catches calls stuck in unexpected states (e.g., notify-mode calls that never
+   * receive a terminal webhook from the provider).
+   */
+  private startStaleCallReaper(): void {
+    const maxAgeSeconds = this.config.staleCallReaperSeconds;
+    if (!maxAgeSeconds || maxAgeSeconds <= 0) {
+      return;
+    }
+
+    const CHECK_INTERVAL_MS = 30_000; // Check every 30 seconds
+    const maxAgeMs = maxAgeSeconds * 1000;
+
+    this.staleCallReaperInterval = setInterval(() => {
+      const now = Date.now();
+      for (const call of this.manager.getActiveCalls()) {
+        const age = now - call.startedAt;
+        if (age > maxAgeMs) {
+          console.log(
+            `[voice-call] Reaping stale call ${call.callId} (age: ${Math.round(age / 1000)}s, state: ${call.state})`,
+          );
+          void this.manager.endCall(call.callId).catch((err) => {
+            console.warn(`[voice-call] Reaper failed to end call ${call.callId}:`, err);
+          });
+        }
+      }
+    }, CHECK_INTERVAL_MS);
   }
 
   /**
    * Stop the webhook server.
    */
   async stop(): Promise<void> {
-    if (this.stopStaleCallReaper) {
-      this.stopStaleCallReaper();
-      this.stopStaleCallReaper = null;
+    if (this.staleCallReaperInterval) {
+      clearInterval(this.staleCallReaperInterval);
+      this.staleCallReaperInterval = null;
     }
     return new Promise((resolve) => {
       if (this.server) {
@@ -255,25 +281,6 @@ export class VoiceCallWebhookServer {
     }
   }
 
-  private normalizeWebhookPathForMatch(pathname: string): string {
-    const trimmed = pathname.trim();
-    if (!trimmed) {
-      return "/";
-    }
-    const prefixed = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
-    if (prefixed === "/") {
-      return prefixed;
-    }
-    return prefixed.endsWith("/") ? prefixed.slice(0, -1) : prefixed;
-  }
-
-  private isWebhookPathMatch(requestPath: string, configuredPath: string): boolean {
-    return (
-      this.normalizeWebhookPathForMatch(requestPath) ===
-      this.normalizeWebhookPathForMatch(configuredPath)
-    );
-  }
-
   /**
    * Handle incoming HTTP request.
    */
@@ -285,7 +292,7 @@ export class VoiceCallWebhookServer {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
     // Check path
-    if (!this.isWebhookPathMatch(url.pathname, webhookPath)) {
+    if (!url.pathname.startsWith(webhookPath)) {
       res.statusCode = 404;
       res.end("Not Found");
       return;
@@ -334,17 +341,9 @@ export class VoiceCallWebhookServer {
       res.end("Unauthorized");
       return;
     }
-    if (!verification.verifiedRequestKey) {
-      console.warn("[voice-call] Webhook verification succeeded without request identity key");
-      res.statusCode = 401;
-      res.end("Unauthorized");
-      return;
-    }
 
     // Parse events
-    const result = this.provider.parseWebhookEvent(ctx, {
-      verifiedRequestKey: verification.verifiedRequestKey,
-    });
+    const result = this.provider.parseWebhookEvent(ctx);
 
     // Process each event
     if (verification.isReplay) {

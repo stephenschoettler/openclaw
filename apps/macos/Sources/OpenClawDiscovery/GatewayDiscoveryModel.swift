@@ -92,22 +92,31 @@ public final class GatewayDiscoveryModel {
         if !self.browsers.isEmpty { return }
 
         for domain in OpenClawBonjour.gatewayServiceDomains {
-            let browser = GatewayDiscoveryBrowserSupport.makeBrowser(
-                serviceType: OpenClawBonjour.gatewayServiceType,
-                domain: domain,
-                queueLabelPrefix: "ai.openclaw.macos.gateway-discovery",
-                onState: { [weak self] state in
+            let params = NWParameters.tcp
+            params.includePeerToPeer = true
+            let browser = NWBrowser(
+                for: .bonjour(type: OpenClawBonjour.gatewayServiceType, domain: domain),
+                using: params)
+
+            browser.stateUpdateHandler = { [weak self] state in
+                Task { @MainActor in
                     guard let self else { return }
                     self.statesByDomain[domain] = state
                     self.updateStatusText()
-                },
-                onResults: { [weak self] results in
+                }
+            }
+
+            browser.browseResultsChangedHandler = { [weak self] results, _ in
+                Task { @MainActor in
                     guard let self else { return }
                     self.resultsByDomain[domain] = results
                     self.updateGateways(for: domain)
                     self.recomputeGateways()
-                })
+                }
+            }
+
             self.browsers[domain] = browser
+            browser.start(queue: DispatchQueue(label: "ai.openclaw.macos.gateway-discovery.\(domain)"))
         }
 
         self.scheduleWideAreaFallback()
@@ -608,7 +617,8 @@ final class GatewayServiceResolver: NSObject, NetServiceDelegate {
     }
 
     func start(timeout: TimeInterval = 2.0) {
-        BonjourServiceResolverSupport.start(self.service, timeout: timeout)
+        self.service.schedule(in: .main, forMode: .common)
+        self.service.resolve(withTimeout: timeout)
     }
 
     func cancel() {
@@ -654,7 +664,9 @@ final class GatewayServiceResolver: NSObject, NetServiceDelegate {
     }
 
     private static func normalizeHost(_ raw: String?) -> String? {
-        BonjourServiceResolverSupport.normalizeHost(raw)
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty { return nil }
+        return trimmed.hasSuffix(".") ? String(trimmed.dropLast()) : trimmed
     }
 
     private func formatTXT(_ txt: [String: String]) -> String {

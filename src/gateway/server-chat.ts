@@ -75,20 +75,6 @@ function normalizeHeartbeatChatFinalText(params: {
   return { suppress: false, text: stripped.text };
 }
 
-function isSilentReplyLeadFragment(text: string): boolean {
-  const normalized = text.trim().toUpperCase();
-  if (!normalized) {
-    return false;
-  }
-  if (!/^[A-Z_]+$/.test(normalized)) {
-    return false;
-  }
-  if (normalized === SILENT_REPLY_TOKEN) {
-    return false;
-  }
-  return SILENT_REPLY_TOKEN.startsWith(normalized);
-}
-
 export type ChatRunEntry = {
   sessionKey: string;
   clientRunId: string;
@@ -302,13 +288,10 @@ export function createAgentEventHandler({
     if (!cleaned) {
       return;
     }
-    chatRunState.buffers.set(clientRunId, cleaned);
     if (isSilentReplyText(cleaned, SILENT_REPLY_TOKEN)) {
       return;
     }
-    if (isSilentReplyLeadFragment(cleaned)) {
-      return;
-    }
+    chatRunState.buffers.set(clientRunId, cleaned);
     if (shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
       return;
     }

@@ -47,7 +47,6 @@ describe("isChatStopCommandText", () => {
   it("matches slash and standalone multilingual stop forms", () => {
     expect(isChatStopCommandText(" /STOP!!! ")).toBe(true);
     expect(isChatStopCommandText("stop please")).toBe(true);
-    expect(isChatStopCommandText("do not do that")).toBe(true);
     expect(isChatStopCommandText("停止")).toBe(true);
     expect(isChatStopCommandText("やめて")).toBe(true);
     expect(isChatStopCommandText("توقف")).toBe(true);
@@ -56,7 +55,6 @@ describe("isChatStopCommandText", () => {
     expect(isChatStopCommandText("stopp")).toBe(true);
     expect(isChatStopCommandText("pare")).toBe(true);
     expect(isChatStopCommandText("/status")).toBe(false);
-    expect(isChatStopCommandText("please do not do that")).toBe(false);
     expect(isChatStopCommandText("keep going")).toBe(false);
   });
 });

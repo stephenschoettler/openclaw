@@ -41,11 +41,15 @@ import { runMemoryFlushIfNeeded } from "./agent-runner-memory.js";
 import { buildReplyPayloads } from "./agent-runner-payloads.js";
 import { appendUsageLine, formatResponseUsageLine } from "./agent-runner-utils.js";
 import { createAudioAsVoiceBuffer, createBlockReplyPipeline } from "./block-reply-pipeline.js";
-import { resolveEffectiveBlockStreamingConfig } from "./block-streaming.js";
+import { resolveBlockStreamingCoalescing } from "./block-streaming.js";
 import { createFollowupRunner } from "./followup-runner.js";
-import { resolveOriginMessageProvider, resolveOriginMessageTo } from "./origin-routing.js";
+import {
+  auditPostCompactionReads,
+  extractReadPaths,
+  formatAuditWarning,
+  readSessionMessages,
+} from "./post-compaction-audit.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
-import { resolveActiveRunQueueAction } from "./queue-policy.js";
 import { enqueueFollowupRun, type FollowupRun, type QueueSettings } from "./queue.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
 import { incrementRunCompactionCount, persistRunSessionUsage } from "./session-run-accounting.js";
@@ -88,6 +92,9 @@ function appendUnscheduledReminderNote(payloads: ReplyPayload[]): ReplyPayload[]
     };
   });
 }
+
+// Track sessions pending post-compaction read audit (Layer 3)
+const pendingPostCompactionAudits = new Map<string, boolean>();
 
 export async function runReplyAgent(params: {
   commandBody: string;
@@ -172,10 +179,11 @@ export async function runReplyAgent(params: {
   const pendingToolTasks = new Set<Promise<void>>();
   const blockReplyTimeoutMs = opts?.blockReplyTimeoutMs ?? BLOCK_REPLY_SEND_TIMEOUT_MS;
 
-  const replyToChannel = resolveOriginMessageProvider({
-    originatingChannel: sessionCtx.OriginatingChannel,
-    provider: sessionCtx.Surface ?? sessionCtx.Provider,
-  }) as OriginatingChannelType | undefined;
+  const replyToChannel =
+    sessionCtx.OriginatingChannel ??
+    ((sessionCtx.Surface ?? sessionCtx.Provider)?.toLowerCase() as
+      | OriginatingChannelType
+      | undefined);
   const replyToMode = resolveReplyToMode(
     followupRun.run.config,
     replyToChannel,
@@ -186,12 +194,12 @@ export async function runReplyAgent(params: {
   const cfg = followupRun.run.config;
   const blockReplyCoalescing =
     blockStreamingEnabled && opts?.onBlockReply
-      ? resolveEffectiveBlockStreamingConfig({
+      ? resolveBlockStreamingCoalescing(
           cfg,
-          provider: sessionCtx.Provider,
-          accountId: sessionCtx.AccountId,
-          chunking: blockReplyChunking,
-        }).coalescing
+          sessionCtx.Provider,
+          sessionCtx.AccountId,
+          blockReplyChunking,
+        )
       : undefined;
   const blockReplyPipeline =
     blockStreamingEnabled && opts?.onBlockReply
@@ -227,19 +235,7 @@ export async function runReplyAgent(params: {
     }
   }
 
-  const activeRunQueueAction = resolveActiveRunQueueAction({
-    isActive,
-    isHeartbeat,
-    shouldFollowup,
-    queueMode: resolvedQueue.mode,
-  });
-
-  if (activeRunQueueAction === "drop") {
-    typing.cleanup();
-    return undefined;
-  }
-
-  if (activeRunQueueAction === "enqueue-followup") {
+  if (isActive && (shouldFollowup || resolvedQueue.mode === "steer")) {
     enqueueFollowupRun(queueKey, followupRun, resolvedQueue);
     await touchActiveSessionEntry();
     typing.cleanup();
@@ -251,7 +247,6 @@ export async function runReplyAgent(params: {
   activeSessionEntry = await runMemoryFlushIfNeeded({
     cfg,
     followupRun,
-    promptForEstimate: followupRun.prompt,
     sessionCtx,
     opts,
     defaultModel,
@@ -519,11 +514,7 @@ export async function runReplyAgent(params: {
       messagingToolSentTexts: runResult.messagingToolSentTexts,
       messagingToolSentMediaUrls: runResult.messagingToolSentMediaUrls,
       messagingToolSentTargets: runResult.messagingToolSentTargets,
-      originatingChannel: sessionCtx.OriginatingChannel,
-      originatingTo: resolveOriginMessageTo({
-        originatingTo: sessionCtx.OriginatingTo,
-        to: sessionCtx.To,
-      }),
+      originatingTo: sessionCtx.OriginatingTo ?? sessionCtx.To,
       accountId: sessionCtx.AccountId,
     });
     const { replyPayloads } = payloadResult;
@@ -605,7 +596,7 @@ export async function runReplyAgent(params: {
         costConfig,
       });
       if (formatted && responseUsageMode === "full" && sessionKey) {
-        formatted = `${formatted} · session \`${sessionKey}\``;
+        formatted = `${formatted} · session ${sessionKey}`;
       }
       if (formatted) {
         responseUsageLine = formatted;
@@ -696,6 +687,9 @@ export async function runReplyAgent(params: {
           .catch(() => {
             // Silent failure — post-compaction context is best-effort
           });
+
+        // Set pending audit flag for Layer 3 (post-compaction read audit)
+        pendingPostCompactionAudits.set(sessionKey, true);
       }
 
       if (verboseEnabled) {
@@ -710,25 +704,32 @@ export async function runReplyAgent(params: {
       finalPayloads = appendUsageLine(finalPayloads, responseUsageLine);
     }
 
+    // Post-compaction read audit (Layer 3)
+    if (sessionKey && pendingPostCompactionAudits.get(sessionKey)) {
+      pendingPostCompactionAudits.delete(sessionKey); // Delete FIRST — one-shot only
+      try {
+        const sessionFile = activeSessionEntry?.sessionFile;
+        if (sessionFile) {
+          const messages = readSessionMessages(sessionFile);
+          const readPaths = extractReadPaths(messages);
+          const workspaceDir = process.cwd();
+          const audit = auditPostCompactionReads(readPaths, workspaceDir);
+          if (!audit.passed) {
+            enqueueSystemEvent(formatAuditWarning(audit.missingPatterns), { sessionKey });
+          }
+        }
+      } catch {
+        // Silent failure — audit is best-effort
+      }
+    }
+
     return finalizeWithFollowup(
       finalPayloads.length === 1 ? finalPayloads[0] : finalPayloads,
       queueKey,
       runFollowupTurn,
     );
-  } catch (error) {
-    // Keep the followup queue moving even when an unexpected exception escapes
-    // the run path; the caller still receives the original error.
-    finalizeWithFollowup(undefined, queueKey, runFollowupTurn);
-    throw error;
   } finally {
     blockReplyPipeline?.stop();
     typing.markRunComplete();
-    // Safety net: the dispatcher's onIdle callback normally fires
-    // markDispatchIdle(), but if the dispatcher exits early, errors,
-    // or the reply path doesn't go through it cleanly, the second
-    // signal never fires and the typing keepalive loop runs forever.
-    // Calling this twice is harmless — cleanup() is guarded by the
-    // `active` flag.  Same pattern as the followup runner fix (#26881).
-    typing.markDispatchIdle();
   }
 }

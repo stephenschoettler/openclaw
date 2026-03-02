@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { openBoundaryFile } from "../../infra/boundary-file-read.js";
 
 const MAX_CONTEXT_CHARS = 3000;
 
@@ -12,21 +11,11 @@ export async function readPostCompactionContext(workspaceDir: string): Promise<s
   const agentsPath = path.join(workspaceDir, "AGENTS.md");
 
   try {
-    const opened = await openBoundaryFile({
-      absolutePath: agentsPath,
-      rootPath: workspaceDir,
-      boundaryLabel: "workspace root",
-    });
-    if (!opened.ok) {
+    if (!fs.existsSync(agentsPath)) {
       return null;
     }
-    const content = (() => {
-      try {
-        return fs.readFileSync(opened.fd, "utf-8");
-      } finally {
-        fs.closeSync(opened.fd);
-      }
-    })();
+
+    const content = await fs.promises.readFile(agentsPath, "utf-8");
 
     // Extract "## Session Startup" and "## Red Lines" sections
     // Each section ends at the next "## " heading or end of file

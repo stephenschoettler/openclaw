@@ -34,7 +34,6 @@ import {
   validateCronForm,
   hasCronFormErrors,
   normalizeCronFormState,
-  getVisibleCronJobs,
   updateCronJobsFilter,
   updateCronRunsFilter,
 } from "./controllers/cron.ts";
@@ -63,10 +62,8 @@ import {
   updateSkillEdit,
   updateSkillEnabled,
 } from "./controllers/skills.ts";
-import { buildExternalLinkRel, EXTERNAL_LINK_TARGET } from "./external-link.ts";
 import { icons } from "./icons.ts";
 import { normalizeBasePath, TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
-import { resolveConfiguredCronModelSuggestions, sortLocaleStrings } from "./views/agents-utils.ts";
 import { renderAgents } from "./views/agents.ts";
 import { renderChannels } from "./views/channels.ts";
 import { renderChat } from "./views/chat.ts";
@@ -166,7 +163,7 @@ export function renderApp(state: AppViewState) {
     state.agentsList?.defaultId ??
     state.agentsList?.agents?.[0]?.id ??
     null;
-  const cronAgentSuggestions = sortLocaleStrings(
+  const cronAgentSuggestions = Array.from(
     new Set(
       [
         ...(state.agentsList?.agents?.map((entry) => entry.id.trim()) ?? []),
@@ -175,12 +172,11 @@ export function renderApp(state: AppViewState) {
           .filter(Boolean),
       ].filter(Boolean),
     ),
-  );
-  const cronModelSuggestions = sortLocaleStrings(
+  ).toSorted((a, b) => a.localeCompare(b));
+  const cronModelSuggestions = Array.from(
     new Set(
       [
         ...state.cronModelSuggestions,
-        ...resolveConfiguredCronModelSuggestions(configValue),
         ...state.cronJobs
           .map((job) => {
             if (job.payload.kind !== "agentTurn" || typeof job.payload.model !== "string") {
@@ -191,8 +187,7 @@ export function renderApp(state: AppViewState) {
           .filter(Boolean),
       ].filter(Boolean),
     ),
-  );
-  const visibleCronJobs = getVisibleCronJobs(state);
+  ).toSorted((a, b) => a.localeCompare(b));
   const selectedDeliveryChannel =
     state.cronForm.deliveryChannel && state.cronForm.deliveryChannel.trim()
       ? state.cronForm.deliveryChannel.trim()
@@ -214,7 +209,6 @@ export function renderApp(state: AppViewState) {
     ...jobToSuggestions,
     ...accountToSuggestions,
   ]);
-  const accountSuggestions = uniquePreserveOrder(accountToSuggestions);
   const deliveryToSuggestions =
     state.cronForm.deliveryMode === "webhook"
       ? rawDeliveryToSuggestions.filter((value) => isHttpUrl(value))
@@ -295,8 +289,8 @@ export function renderApp(state: AppViewState) {
             <a
               class="nav-item nav-item--external"
               href="https://docs.openclaw.ai"
-              target=${EXTERNAL_LINK_TARGET}
-              rel=${buildExternalLinkRel()}
+              target="_blank"
+              rel="noreferrer"
               title="${t("common.docs")} (opens in new tab)"
             >
               <span class="nav-item__icon" aria-hidden="true">${icons.book}</span>
@@ -447,13 +441,11 @@ export function renderApp(state: AppViewState) {
                 loading: state.cronLoading,
                 jobsLoadingMore: state.cronJobsLoadingMore,
                 status: state.cronStatus,
-                jobs: visibleCronJobs,
+                jobs: state.cronJobs,
                 jobsTotal: state.cronJobsTotal,
                 jobsHasMore: state.cronJobsHasMore,
                 jobsQuery: state.cronJobsQuery,
                 jobsEnabledFilter: state.cronJobsEnabledFilter,
-                jobsScheduleKindFilter: state.cronJobsScheduleKindFilter,
-                jobsLastStatusFilter: state.cronJobsLastStatusFilter,
                 jobsSortBy: state.cronJobsSortBy,
                 jobsSortDir: state.cronJobsSortDir,
                 error: state.cronError,
@@ -483,7 +475,6 @@ export function renderApp(state: AppViewState) {
                 thinkingSuggestions: CRON_THINKING_SUGGESTIONS,
                 timezoneSuggestions: CRON_TIMEZONE_SUGGESTIONS,
                 deliveryToSuggestions,
-                accountSuggestions,
                 onFormChange: (patch) => {
                   state.cronForm = normalizeCronFormState({ ...state.cronForm, ...patch });
                   state.cronFieldErrors = validateCronForm(state.cronForm);
@@ -494,7 +485,7 @@ export function renderApp(state: AppViewState) {
                 onClone: (job) => startCronClone(state, job),
                 onCancelEdit: () => cancelCronEdit(state),
                 onToggle: (job, enabled) => toggleCronJob(state, job, enabled),
-                onRun: (job, mode) => runCronJob(state, job, mode ?? "force"),
+                onRun: (job) => runCronJob(state, job),
                 onRemove: (job) => removeCronJob(state, job),
                 onLoadRuns: async (jobId) => {
                   updateCronRunsFilter(state, { cronRunsScope: "job" });
@@ -503,24 +494,6 @@ export function renderApp(state: AppViewState) {
                 onLoadMoreJobs: () => loadMoreCronJobs(state),
                 onJobsFiltersChange: async (patch) => {
                   updateCronJobsFilter(state, patch);
-                  const shouldReload =
-                    typeof patch.cronJobsQuery === "string" ||
-                    Boolean(patch.cronJobsEnabledFilter) ||
-                    Boolean(patch.cronJobsSortBy) ||
-                    Boolean(patch.cronJobsSortDir);
-                  if (shouldReload) {
-                    await reloadCronJobs(state);
-                  }
-                },
-                onJobsFiltersReset: async () => {
-                  updateCronJobsFilter(state, {
-                    cronJobsQuery: "",
-                    cronJobsEnabledFilter: "all",
-                    cronJobsScheduleKindFilter: "all",
-                    cronJobsLastStatusFilter: "all",
-                    cronJobsSortBy: "nextRunAtMs",
-                    cronJobsSortDir: "asc",
-                  });
                   await reloadCronJobs(state);
                 },
                 onLoadMoreRuns: () => loadMoreCronRuns(state),
@@ -1073,6 +1046,11 @@ export function renderApp(state: AppViewState) {
                 onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
                 assistantName: state.assistantName,
                 assistantAvatar: state.assistantAvatar,
+                // Input history (terminal-style)
+                inputHistory: state.chatInputHistory,
+                inputHistoryIndex: state.chatInputHistoryIndex,
+                onHistoryNavigate: (direction: "up" | "down") =>
+                  state.handleInputHistoryNavigate(direction),
               })
             : nothing
         }
