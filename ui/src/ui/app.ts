@@ -153,6 +153,7 @@ export class OpenClawApp extends LitElement {
   @state() chatAttachments: ChatAttachment[] = [];
   @state() chatInputHistory: string[] = this.loadInputHistory();
   @state() chatInputHistoryIndex = -1;
+  chatInputDraft: string | null = null;
   @state() chatManualRefreshInFlight = false;
   // Sidebar state for tool output viewing
   @state() sidebarOpen = false;
@@ -514,6 +515,9 @@ export class OpenClawApp extends LitElement {
 
     if (direction === "up") {
       if (this.chatInputHistoryIndex < history.length - 1) {
+        if (this.chatInputHistoryIndex === -1) {
+          this.chatInputDraft = this.chatMessage;
+        }
         this.chatInputHistoryIndex++;
         this.chatMessage = history[history.length - 1 - this.chatInputHistoryIndex];
       }
@@ -523,7 +527,8 @@ export class OpenClawApp extends LitElement {
         this.chatMessage = history[history.length - 1 - this.chatInputHistoryIndex];
       } else if (this.chatInputHistoryIndex === 0) {
         this.chatInputHistoryIndex = -1;
-        this.chatMessage = "";
+        this.chatMessage = this.chatInputDraft ?? "";
+        this.chatInputDraft = null;
       }
     }
   }
