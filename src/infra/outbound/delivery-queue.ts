@@ -320,6 +320,8 @@ const PERMANENT_ERROR_PATTERNS: readonly RegExp[] = [
   /chat_id is empty/i,
   /recipient is not a valid/i,
   /outbound not configured for channel/i,
+  // Message content errors — retrying will always fail with the same payload.
+  /message is too long/i,
 ];
 
 export function isPermanentDeliveryError(error: string): boolean {

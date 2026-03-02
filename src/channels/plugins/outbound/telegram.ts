@@ -40,7 +40,7 @@ export const telegramOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: markdownToTelegramHtmlChunks,
   chunkerMode: "markdown",
-  textChunkLimit: 4000,
+  textChunkLimit: 3000,
   sendText: async ({ to, text, accountId, deps, replyToId, threadId }) => {
     const { send, baseOpts } = resolveTelegramSendContext({
       deps,

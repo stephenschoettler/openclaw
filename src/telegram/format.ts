@@ -260,6 +260,16 @@ export function markdownToTelegramChunks(
   }));
 }
 
+// Telegram Bot API hard limit for message text (HTML mode).
+const TELEGRAM_HTML_MAX_CHARS = 4096;
+
 export function markdownToTelegramHtmlChunks(markdown: string, limit: number): string[] {
-  return markdownToTelegramChunks(markdown, limit).map((chunk) => chunk.html);
+  const chunks = markdownToTelegramChunks(markdown, limit).map((chunk) => chunk.html);
+  // Safety guard: chunkMarkdownIR splits by plain-text length, but HTML rendering can
+  // expand the output (entity escaping, tag overhead). If any rendered chunk still
+  // exceeds Telegram's hard limit, truncate it with an ellipsis rather than letting
+  // the API reject the whole message.
+  return chunks.map((html) =>
+    html.length > TELEGRAM_HTML_MAX_CHARS ? html.slice(0, TELEGRAM_HTML_MAX_CHARS - 1) + "…" : html,
+  );
 }
